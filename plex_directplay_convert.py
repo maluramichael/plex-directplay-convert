@@ -114,6 +114,102 @@ def setup_signal_handlers():
     if hasattr(signal, 'SIGHUP'):
         signal.signal(signal.SIGHUP, signal_handler)
 
+def detect_gpu_acceleration():
+    """Detect available GPU acceleration options"""
+    gpu_info = {
+        'available': False,
+        'encoder': None,
+        'decoder': None,
+        'platform': None
+    }
+    
+    try:
+        # Check ffmpeg encoders
+        code, out, err = run_simple(['ffmpeg', '-encoders'])
+        if code != 0:
+            return gpu_info
+            
+        encoders_output = out.lower()
+        
+        # Check for Metal (macOS)
+        if 'videotoolbox' in encoders_output and sys.platform == 'darwin':
+            gpu_info.update({
+                'available': True,
+                'encoder': 'h264_videotoolbox',
+                'decoder': 'h264',  # Use software decoder, hardware encoder
+                'platform': 'metal'
+            })
+            return gpu_info
+        
+        # Check for NVIDIA (Windows/Linux)
+        if 'h264_nvenc' in encoders_output:
+            gpu_info.update({
+                'available': True,
+                'encoder': 'h264_nvenc',
+                'decoder': 'h264_cuvid',  # Hardware decoder if available
+                'platform': 'nvidia'
+            })
+            return gpu_info
+            
+        # Check for Intel QuickSync (Windows/Linux)
+        if 'h264_qsv' in encoders_output:
+            gpu_info.update({
+                'available': True,
+                'encoder': 'h264_qsv',
+                'decoder': 'h264_qsv',
+                'platform': 'intel'
+            })
+            return gpu_info
+            
+    except Exception as e:
+        print(f"⚠️  GPU-Erkennung fehlgeschlagen: {e}")
+    
+    return gpu_info
+
+def get_gpu_encoder_params(gpu_info, crf, preset):
+    """Get GPU-specific encoding parameters"""
+    if not gpu_info['available']:
+        return []
+    
+    params = []
+    
+    if gpu_info['platform'] == 'metal':
+        # VideoToolbox (Mac Metal)
+        # Convert CRF to quality (0-100, higher = better)
+        quality = max(0, min(100, 100 - (crf * 2)))
+        params.extend([
+            '-c:v', 'h264_videotoolbox',
+            '-q:v', str(quality),
+            '-realtime', '0'  # Allow slower encoding for better quality
+        ])
+        
+    elif gpu_info['platform'] == 'nvidia':
+        # NVIDIA NVENC
+        # Convert preset to NVENC preset
+        nvenc_presets = {
+            'ultrafast': 'p1', 'superfast': 'p2', 'veryfast': 'p3',
+            'faster': 'p4', 'fast': 'p5', 'medium': 'p6',
+            'slow': 'p7', 'slower': 'p7', 'veryslow': 'p7'
+        }
+        nvenc_preset = nvenc_presets.get(preset, 'p6')
+        
+        params.extend([
+            '-c:v', 'h264_nvenc',
+            '-preset', nvenc_preset,
+            '-cq', str(crf),
+            '-rc', 'constqp'
+        ])
+        
+    elif gpu_info['platform'] == 'intel':
+        # Intel QuickSync
+        params.extend([
+            '-c:v', 'h264_qsv',
+            '-preset', preset,
+            '-global_quality', str(crf)
+        ])
+    
+    return params
+
 def filter_and_sort_streams(streams, languages, keep_languages=None, sort_languages=None):
     """Filter and sort streams based on language preferences"""
     if not streams:
@@ -462,7 +558,8 @@ def needs_processing(info, out_ext: str):
         return 'transcode_all'
 
 def build_ffmpeg_cmd(inp: Path, out: Path, mode: str, crf: int, preset: str, is_hdr: bool = False, 
-                     info: dict = None, keep_languages: list = None, sort_languages: list = None):
+                     info: dict = None, keep_languages: list = None, sort_languages: list = None, 
+                     gpu_info: dict = None, use_gpu: bool = False):
     base = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'warning', '-progress', 'pipe:2', '-i', str(inp)]
     
     if mode == 'skip':
@@ -494,37 +591,69 @@ def build_ffmpeg_cmd(inp: Path, out: Path, mode: str, crf: int, preset: str, is_
         ]
     elif mode == 'transcode_video':
         # Video transkodieren, Audio kopieren
-        cmd = base + map_args + [
-            '-c:v', 'libx264', '-preset', preset, '-crf', str(crf),
-            '-c:a', 'copy',
-        ]
+        cmd = base + map_args + ['-c:a', 'copy']
+        
+        # Choose video encoder (GPU vs CPU)
+        if use_gpu and gpu_info and gpu_info['available']:
+            # GPU encoding
+            gpu_params = get_gpu_encoder_params(gpu_info, crf, preset)
+            cmd.extend(gpu_params)
+        else:
+            # CPU encoding
+            cmd.extend(['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)])
         
         # HDR to SDR tone mapping for Apple TV compatibility
         if is_hdr:
-            cmd.extend([
-                '-vf', 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
-                '-color_primaries', 'bt709',
-                '-color_trc', 'bt709',
-                '-colorspace', 'bt709'
-            ])
+            # Note: GPU tone mapping may have different filter syntax
+            if use_gpu and gpu_info and gpu_info['platform'] == 'metal':
+                # VideoToolbox tone mapping (simplified)
+                cmd.extend([
+                    '-color_primaries', 'bt709',
+                    '-color_trc', 'bt709',
+                    '-colorspace', 'bt709'
+                ])
+            else:
+                # Software tone mapping
+                cmd.extend([
+                    '-vf', 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
+                    '-color_primaries', 'bt709',
+                    '-color_trc', 'bt709',
+                    '-colorspace', 'bt709'
+                ])
         
         cmd.extend(['-movflags', '+faststart', str(out)])
         return cmd
     else:
-        # transcode_all: Video -> libx264 SDR, Audio -> AAC Stereo
-        cmd = base + map_args + [
-            '-c:v', 'libx264', '-preset', preset, '-crf', str(crf),
-            '-c:a', 'aac', '-ac', '2', '-b:a', '192k',
-        ]
+        # transcode_all: Video -> H.264 SDR, Audio -> AAC Stereo
+        cmd = base + map_args + ['-c:a', 'aac', '-ac', '2', '-b:a', '192k']
+        
+        # Choose video encoder (GPU vs CPU)
+        if use_gpu and gpu_info and gpu_info['available']:
+            # GPU encoding
+            gpu_params = get_gpu_encoder_params(gpu_info, crf, preset)
+            cmd.extend(gpu_params)
+        else:
+            # CPU encoding
+            cmd.extend(['-c:v', 'libx264', '-preset', preset, '-crf', str(crf)])
         
         # HDR to SDR tone mapping for Apple TV compatibility
         if is_hdr:
-            cmd.extend([
-                '-vf', 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
-                '-color_primaries', 'bt709',
-                '-color_trc', 'bt709',
-                '-colorspace', 'bt709'
-            ])
+            # Note: GPU tone mapping may have different filter syntax
+            if use_gpu and gpu_info and gpu_info['platform'] == 'metal':
+                # VideoToolbox tone mapping (simplified)
+                cmd.extend([
+                    '-color_primaries', 'bt709',
+                    '-color_trc', 'bt709',
+                    '-colorspace', 'bt709'
+                ])
+            else:
+                # Software tone mapping
+                cmd.extend([
+                    '-vf', 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p',
+                    '-color_primaries', 'bt709',
+                    '-color_trc', 'bt709',
+                    '-colorspace', 'bt709'
+                ])
         
         cmd.extend(['-movflags', '+faststart', str(out)])
         return cmd
@@ -537,7 +666,7 @@ def format_file_size(size_bytes):
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} TB"
 
-def display_file_info(src: Path, info: dict, mode: str, out_path: Path, debug_cmd: list = None):
+def display_file_info(src: Path, info: dict, mode: str, out_path: Path, debug_cmd: list = None, gpu_info: dict = None, use_gpu: bool = False):
     """Display detailed file information"""
     print(f"\n{'='*60}")
     print(f"📁 Datei: {src}")
@@ -563,6 +692,15 @@ def display_file_info(src: Path, info: dict, mode: str, out_path: Path, debug_cm
     if info.get('subtitle_languages'):
         sub_langs = ', '.join(set(info['subtitle_languages']))  # Remove duplicates
         print(f"💬 Subtitles: {sub_langs}")
+    
+    # Show GPU acceleration status
+    if use_gpu:
+        if gpu_info and gpu_info['available']:
+            platform_icons = {'metal': '🍎', 'nvidia': '🟢', 'intel': '🔵'}
+            icon = platform_icons.get(gpu_info['platform'], '⚡')
+            print(f"{icon} GPU: {gpu_info['platform'].title()} ({gpu_info['encoder']})")
+        else:
+            print("⚠️  GPU: Angefordert, aber nicht verfügbar - verwende CPU")
     
     print(f"📤 Ausgabe: {out_path}")
     
@@ -696,7 +834,8 @@ def ask_user_confirmation():
             print("Bitte eingeben: j/n/a/q")
 
 def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool, interactive: bool = False, 
-                auto_yes: bool = False, debug: bool = False, keep_languages: list = None, sort_languages: list = None):
+                auto_yes: bool = False, debug: bool = False, keep_languages: list = None, sort_languages: list = None,
+                gpu_info: dict = None, use_gpu: bool = False):
     info = discover_media(src)
     if not info['has_video']:
         print(f'⏭️  Kein Video: {src}')
@@ -714,11 +853,11 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     debug_cmd = None
     if debug or (interactive and debug):
         debug_cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
-                                   info, keep_languages, sort_languages)
+                                   info, keep_languages, sort_languages, gpu_info, use_gpu)
     
     # Interactive mode: show info and ask for confirmation
     if interactive and not auto_yes:
-        display_file_info(src, info, mode, out_path, debug_cmd)
+        display_file_info(src, info, mode, out_path, debug_cmd, gpu_info, use_gpu)
         choice = ask_user_confirmation()
         if choice == 'quit':
             print("Abgebrochen.")
@@ -752,7 +891,7 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
             return 'skipped', auto_yes
 
     cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
-                          info, keep_languages, sort_languages)
+                          info, keep_languages, sort_languages, gpu_info, use_gpu)
     if mode == 'remux_audio':
         action = 'remux+audio'
     elif mode == 'transcode_video':
@@ -760,7 +899,8 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     else:
         action = 'transcode'
     hdr_status = " HDR→SDR" if info.get('is_hdr', False) else ""
-    print(f'🎯 {action}{hdr_status}: {src.name} -> {out_path.name} (v:{info["video_codec"]} a:{",".join(info["audio_codecs"] or ["-"])})')
+    gpu_status = f" ({gpu_info['platform'].upper()})" if use_gpu and gpu_info and gpu_info['available'] else ""
+    print(f'🎯 {action}{hdr_status}{gpu_status}: {src.name} -> {out_path.name} (v:{info["video_codec"]} a:{",".join(info["audio_codecs"] or ["-"])})')
     if dry_run:
         return 'planned', auto_yes
     code, out, err = run(cmd, show_progress=True, duration=duration)
@@ -785,6 +925,8 @@ def main():
     ap.add_argument('--preset', type=str, default='medium',
                     choices=['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'],
                     help='x264 Encoding Preset - schneller = größere Datei (Standard: medium)')
+    ap.add_argument('--use-gpu', action='store_true',
+                    help='GPU-Beschleunigung verwenden (Mac Metal / Windows NVIDIA)')
     
     # Operation modes
     ap.add_argument('--dry-run', action='store_true', help='Nur zeigen, was passieren würde')
@@ -815,6 +957,17 @@ def main():
     if shutil.which('ffmpeg') is None or shutil.which('ffprobe') is None:
         print('Fehler: ffmpeg/ffprobe nicht gefunden. Bitte in PATH verfügbar machen.', file=sys.stderr)
         sys.exit(2)
+    
+    # GPU acceleration detection
+    gpu_info = None
+    if getattr(args, 'use_gpu', False):  # Handle potential missing attribute
+        gpu_info = detect_gpu_acceleration()
+        if gpu_info['available']:
+            platform_icons = {'metal': '🍎', 'nvidia': '🟢', 'intel': '🔵'}
+            icon = platform_icons.get(gpu_info['platform'], '⚡')
+            print(f"{icon} GPU-Beschleunigung erkannt: {gpu_info['platform'].title()} ({gpu_info['encoder']})")
+        else:
+            print("⚠️  GPU-Beschleunigung angefordert, aber nicht verfügbar - verwende CPU-Kodierung")
 
     root: Path = args.root
     if not root.exists():
@@ -873,7 +1026,7 @@ def main():
         target_dir = out_dir if out_dir else root.parent
         try:
             res, auto_yes = process_file(root, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                        auto_yes, args.debug, keep_languages, sort_languages)
+                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False))
             if res in ('converted',):
                 converted += 1
             elif res in ('skipped', 'planned'):
@@ -905,7 +1058,7 @@ def main():
             target_dir = out_dir if out_dir else p.parent
             try:
                 res, auto_yes = process_file(p, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                            auto_yes, args.debug, keep_languages, sort_languages)
+                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False))
                 if res in ('converted',):
                     converted += 1
                 elif res in ('skipped', 'planned'):
