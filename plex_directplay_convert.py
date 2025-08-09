@@ -835,6 +835,31 @@ def write_analysis_csv(file_data_list, csv_path: Path):
     compatible_count = sum(1 for data in file_data_list if data['direct_play_compatible'])
     print(f"Direct Play kompatibel: {compatible_count}/{len(file_data_list)} ({compatible_count/len(file_data_list)*100:.1f}%)")
 
+def handle_temp_file_cleanup(temp_path: Path, final_path: Path, src_path: Path, delete_original: bool):
+    """Handle temporary file renaming and original file deletion"""
+    try:
+        # Move temporary file to final location
+        temp_path.rename(final_path)
+        print(f'✅ Datei umbenannt: {temp_path.name} -> {final_path.name}')
+        
+        # Delete original file if requested
+        if delete_original:
+            try:
+                src_path.unlink()
+                print(f'🗑️  Originaldatei gelöscht: {src_path.name}')
+            except Exception as e:
+                print(f'⚠️  Fehler beim Löschen der Originaldatei {src_path.name}: {e}', file=sys.stderr)
+                
+    except Exception as e:
+        print(f'⚠️  Fehler beim Umbenennen der temporären Datei {temp_path.name}: {e}', file=sys.stderr)
+        # Clean up temporary file on error
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+                print(f'🧹 Temporäre Datei entfernt: {temp_path.name}')
+        except Exception as cleanup_e:
+            print(f'⚠️  Fehler beim Entfernen der temporären Datei: {cleanup_e}', file=sys.stderr)
+
 def ask_user_confirmation():
     """Ask user for confirmation with options"""
     while True:
@@ -852,7 +877,7 @@ def ask_user_confirmation():
 
 def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool, interactive: bool = False, 
                 auto_yes: bool = False, debug: bool = False, keep_languages: list = None, sort_languages: list = None,
-                gpu_info: dict = None, use_gpu: bool = False, action_filter: Action = None):
+                gpu_info: dict = None, use_gpu: bool = False, action_filter: Action = None, delete_original: bool = False):
     info = discover_media(src)
     if not info['has_video']:
         print(f'⏭️  Kein Video: {src}')
@@ -860,6 +885,12 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
 
     out_name = src.stem + '.mp4'
     out_path = (dst_dir / out_name).resolve()
+    
+    # Use temporary filename if output would overwrite source and delete_original is enabled
+    temp_output = False
+    if delete_original and src.resolve() == out_path:
+        temp_output = True
+        out_path = (dst_dir / (src.stem + '.tmp.mp4')).resolve()
     
     # Get duration for progress monitoring
     duration = get_duration(src)
@@ -896,14 +927,39 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     elif mode == Action.CONTAINER_REMUX:
         cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
                               info, keep_languages, sort_languages, gpu_info, use_gpu)
-        print(f'🔁 Container Remux: {src.name} -> {out_path.name}')
+        display_name = out_path.name if not temp_output else f'{out_path.name} -> {src.name}'
+        print(f'🔁 Container Remux: {src.name} -> {display_name}')
         if not dry_run:
             code, out, err = run(cmd, show_progress=True, duration=duration)
             if code == 130:  # Interrupted
+                # Clean up temporary file if it exists
+                if temp_output and out_path.exists():
+                    try:
+                        out_path.unlink()
+                    except:
+                        pass
                 return 'interrupted', auto_yes
             elif code != 0:
                 print(err, file=sys.stderr)
+                # Clean up temporary file if it exists
+                if temp_output and out_path.exists():
+                    try:
+                        out_path.unlink()
+                    except:
+                        pass
                 return 'error', auto_yes
+            
+            # Handle temporary file and deletion
+            if temp_output:
+                final_path = (dst_dir / (src.stem + '.mp4')).resolve()
+                handle_temp_file_cleanup(out_path, final_path, src, delete_original)
+            elif delete_original:
+                # Standard case - delete original file
+                try:
+                    src.unlink()
+                    print(f'🗑️  Originaldatei gelöscht: {src.name}')
+                except Exception as e:
+                    print(f'⚠️  Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
         return 'remuxed', auto_yes
 
     cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
@@ -921,10 +977,34 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
         return 'planned', auto_yes
     code, out, err = run(cmd, show_progress=True, duration=duration)
     if code == 130:  # Interrupted
+        # Clean up temporary file if it exists
+        if temp_output and out_path.exists():
+            try:
+                out_path.unlink()
+            except:
+                pass
         return 'interrupted', auto_yes
     elif code != 0:
         print(err, file=sys.stderr)
+        # Clean up temporary file if it exists
+        if temp_output and out_path.exists():
+            try:
+                out_path.unlink()
+            except:
+                pass
         return 'error', auto_yes
+    
+    # Handle temporary file and deletion
+    if temp_output:
+        final_path = (dst_dir / (src.stem + '.mp4')).resolve()
+        handle_temp_file_cleanup(out_path, final_path, src, delete_original)
+    elif delete_original:
+        # Standard case - delete original file
+        try:
+            src.unlink()
+            print(f'🗑️  Originaldatei gelöscht: {src.name}')
+        except Exception as e:
+            print(f'⚠️  Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
     return 'converted', auto_yes
 
 def main():
@@ -949,6 +1029,7 @@ def main():
     ap.add_argument('--interactive', '-i', action='store_true', help='Interaktiver Modus: Zeigt Details und fragt nach Bestätigung')
     ap.add_argument('--debug', action='store_true', help='Debug-Modus: Zeigt ffmpeg-Befehl in interaktivem Modus')
     ap.add_argument('--gather', '-g', type=Path, help='Sammelmodus: Analysiert alle Dateien und speichert Informationen in CSV-Datei')
+    ap.add_argument('--delete-original', action='store_true', help='Originaldatei nach erfolgreicher Konvertierung löschen')
     
     # Language handling
     ap.add_argument('--keep-languages', type=str, help='Sprachen beibehalten (Komma-getrennt, z.B. de,en,jp)')
@@ -1059,7 +1140,7 @@ def main():
         target_dir = out_dir if out_dir else root.parent
         try:
             res, auto_yes = process_file(root, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter)
+                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter, args.delete_original)
             if res in ('converted',):
                 converted += 1
             elif res in ('skipped', 'planned', 'filtered'):
@@ -1091,7 +1172,7 @@ def main():
             target_dir = out_dir if out_dir else p.parent
             try:
                 res, auto_yes = process_file(p, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter)
+                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter, args.delete_original)
                 if res in ('converted',):
                     converted += 1
                 elif res in ('skipped', 'planned', 'filtered'):
