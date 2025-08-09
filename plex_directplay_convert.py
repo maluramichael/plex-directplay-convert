@@ -45,6 +45,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path, PurePath
+from enum import Enum
 
 VIDEO_EXTS = {'.mkv', '.mp4', '.m4v', '.mov', '.avi', '.wmv', '.flv', '.ts', '.m2ts', '.webm'}
 
@@ -69,6 +70,13 @@ LANGUAGE_MAP = {
     # Common fallbacks
     'unknown': 'unknown', 'und': 'unknown', '': 'unknown'
 }
+
+class Action(Enum):
+    SKIP = "skip"
+    REMUX_AUDIO = "remux_audio" # converts to stereo aac
+    TRANCODE_VIDEO = "transcode_video" # converts to h264 SDR
+    TRANCODE_ALL = "transcode_all" # converts to h264 SDR and stereo aac
+    CONTAINER_REMUX = "container_remux" # converts to mp4
 
 def normalize_language(lang_code):
     """Normalize language code using mapping"""
@@ -541,28 +549,31 @@ def needs_processing(info, out_ext: str):
     """Decide whether we must transcode or can remux, or skip entirely.
        Direct-Play-Ziel: MP4 + H.264 SDR + AAC Stereo (Apple TV compatibility)
     """
-    container_ok = out_ext in {'mp4'}
+    container_ok = info['container'] == 'mp4'
     video_ok = (info['video_codec'] or '').lower() in {'h264'} and not info.get('is_hdr', False)
     audio_ok = info['has_audio'] and info['audio_codecs'] and all(c in {'aac'} for c in info['audio_codecs']) and all(ch == 2 for ch in info['audio_channels'])
 
     if container_ok and video_ok and audio_ok:
-        return 'skip'  # vollständig kompatibel
-    elif video_ok and not audio_ok:
+        return Action.SKIP  # vollständig kompatibel
+    elif not container_ok and video_ok and audio_ok:
+        # Nur Container muss zu MP4 geändert werden
+        return Action.CONTAINER_REMUX
+    elif container_ok and video_ok and not audio_ok:
         # Video ist bereits H.264 SDR, nur Audio zu AAC Stereo
-        return 'remux_audio'
-    elif audio_ok and not video_ok:
+        return Action.REMUX_AUDIO
+    elif container_ok and audio_ok and not video_ok:
         # Audio ist bereits AAC Stereo, nur Video transkodieren
-        return 'transcode_video'
+        return Action.TRANCODE_VIDEO
     else:
         # Beide müssen transkodiert werden
-        return 'transcode_all'
+        return Action.TRANCODE_ALL
 
-def build_ffmpeg_cmd(inp: Path, out: Path, mode: str, crf: int, preset: str, is_hdr: bool = False, 
+def build_ffmpeg_cmd(inp: Path, out: Path, mode: Action, crf: int, preset: str, is_hdr: bool = False, 
                      info: dict = None, keep_languages: list = None, sort_languages: list = None, 
                      gpu_info: dict = None, use_gpu: bool = False):
     base = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'warning', '-progress', 'pipe:2', '-i', str(inp)]
     
-    if mode == 'skip':
+    if mode == Action.SKIP:
         return None
 
     # Build stream mapping based on language preferences
@@ -581,7 +592,15 @@ def build_ffmpeg_cmd(inp: Path, out: Path, mode: str, crf: int, preset: str, is_
     else:
         map_args.extend(['-map', '0:a:0?'])  # Fallback when no language filtering
 
-    if mode == 'remux_audio':
+    if mode == Action.CONTAINER_REMUX:
+        # Nur Container zu MP4 ändern, alles andere kopieren
+        return base + map_args + [
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+            '-movflags', '+faststart',
+            str(out)
+        ]
+    elif mode == Action.REMUX_AUDIO:
         # Video kopieren, Audio nach AAC Stereo; MP4 optimieren
         return base + map_args + [
             '-c:v', 'copy',
@@ -589,7 +608,7 @@ def build_ffmpeg_cmd(inp: Path, out: Path, mode: str, crf: int, preset: str, is_
             '-movflags', '+faststart',
             str(out)
         ]
-    elif mode == 'transcode_video':
+    elif mode == Action.TRANCODE_VIDEO:
         # Video transkodieren, Audio kopieren
         cmd = base + map_args + ['-c:a', 'copy']
         
@@ -624,7 +643,7 @@ def build_ffmpeg_cmd(inp: Path, out: Path, mode: str, crf: int, preset: str, is_
         cmd.extend(['-movflags', '+faststart', str(out)])
         return cmd
     else:
-        # transcode_all: Video -> H.264 SDR, Audio -> AAC Stereo
+        # Action.TRANCODE_ALL: Video -> H.264 SDR, Audio -> AAC Stereo
         cmd = base + map_args + ['-c:a', 'aac', '-ac', '2', '-b:a', '192k']
         
         # Choose video encoder (GPU vs CPU)
@@ -666,7 +685,7 @@ def format_file_size(size_bytes):
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} TB"
 
-def display_file_info(src: Path, info: dict, mode: str, out_path: Path, debug_cmd: list = None, gpu_info: dict = None, use_gpu: bool = False):
+def display_file_info(src: Path, info: dict, mode: Action, out_path: Path, debug_cmd: list = None, gpu_info: dict = None, use_gpu: bool = False):
     """Display detailed file information"""
     print(f"\n{'='*60}")
     print(f"📁 Datei: {src}")
@@ -705,17 +724,16 @@ def display_file_info(src: Path, info: dict, mode: str, out_path: Path, debug_cm
     print(f"📤 Ausgabe: {out_path}")
     
     # Show what will be done
-    if mode == 'skip':
-        if src.suffix.lower() != '.mp4':
-            print("🔄 Aktion: Nur Container zu MP4 ändern (remux)")
-        else:
-            print("✅ Aktion: Bereits kompatibel - nichts zu tun")
-    elif mode == 'remux_audio':
+    if mode == Action.SKIP:
+        print("✅ Aktion: Bereits kompatibel - nichts zu tun")
+    elif mode == Action.CONTAINER_REMUX:
+        print("🔄 Aktion: Nur Container zu MP4 ändern (remux)")
+    elif mode == Action.REMUX_AUDIO:
         print("🔄 Aktion: Video kopieren, Audio zu AAC Stereo konvertieren")
-    elif mode == 'transcode_video':
+    elif mode == Action.TRANCODE_VIDEO:
         hdr_note = " + HDR→SDR Konvertierung" if info.get('is_hdr', False) else ""
         print(f"🎯 Aktion: Video zu H.264{hdr_note} konvertieren, Audio kopieren")
-    else:
+    else:  # Action.TRANCODE_ALL
         hdr_note = " + HDR→SDR Konvertierung" if info.get('is_hdr', False) else ""
         print(f"🎯 Aktion: Video zu H.264{hdr_note} + Audio zu AAC Stereo konvertieren")
     
@@ -747,17 +765,16 @@ def analyze_file_for_csv(src: Path):
         
         # Determine what processing is needed
         mode = needs_processing(info, 'mp4')
-        if mode == 'skip':
-            if src.suffix.lower() != '.mp4':
-                action_needed = 'Container remux only'
-            else:
-                action_needed = 'None (already compatible)'
-        elif mode == 'remux_audio':
+        if mode == Action.SKIP:
+            action_needed = 'None (already compatible)'
+        elif mode == Action.CONTAINER_REMUX:
+            action_needed = 'Container remux only'
+        elif mode == Action.REMUX_AUDIO:
             action_needed = 'Audio transcode to AAC stereo'
-        elif mode == 'transcode_video':
+        elif mode == Action.TRANCODE_VIDEO:
             hdr_note = " + HDR→SDR" if info.get('is_hdr', False) else ""
             action_needed = f'Video transcode to H.264{hdr_note}'
-        else:
+        else:  # Action.TRANCODE_ALL
             hdr_note = " + HDR→SDR" if info.get('is_hdr', False) else ""
             action_needed = f'Full transcode (video{hdr_note} + audio)'
         
@@ -835,7 +852,7 @@ def ask_user_confirmation():
 
 def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool, interactive: bool = False, 
                 auto_yes: bool = False, debug: bool = False, keep_languages: list = None, sort_languages: list = None,
-                gpu_info: dict = None, use_gpu: bool = False):
+                gpu_info: dict = None, use_gpu: bool = False, action_filter: Action = None):
     info = discover_media(src)
     if not info['has_video']:
         print(f'⏭️  Kein Video: {src}')
@@ -848,6 +865,10 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     duration = get_duration(src)
 
     mode = needs_processing(info, 'mp4')
+    
+    # Check action filter - skip file if it doesn't match the filter
+    if action_filter and mode != action_filter:
+        return 'filtered', auto_yes
     
     # Build command for debug display
     debug_cmd = None
@@ -869,34 +890,29 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
             # Set flag to skip further confirmations
             auto_yes = True
 
-    if mode == 'skip':
-        # ggf. nur umbenennen, wenn Container nicht .mp4 ist?
-        if src.suffix.lower() != '.mp4':
-            out_path = (dst_dir / out_name).resolve()
-            cmd = ['ffmpeg', '-y', '-hide_banner', '-loglevel', 'warning', '-progress', 'pipe:2', '-i', str(src),
-                   '-map', '0:v:0', '-map', '0:a:0?',
-                   '-c:v', 'copy', '-c:a', 'copy', '-movflags', '+faststart',
-                   str(out_path)]
-            print(f'🔁 Remux (nur Container ändern): {src.name} -> {out_path.name}')
-            if not dry_run:
-                code, out, err = run(cmd, show_progress=True, duration=duration)
-                if code == 130:  # Interrupted
-                    return 'interrupted', auto_yes
-                elif code != 0:
-                    print(err, file=sys.stderr)
-                    return 'error', auto_yes
-            return 'remuxed', auto_yes
-        else:
-            print(f'✅ Bereits kompatibel: {src}')
-            return 'skipped', auto_yes
+    if mode == Action.SKIP:
+        print(f'✅ Bereits kompatibel: {src}')
+        return 'skipped', auto_yes
+    elif mode == Action.CONTAINER_REMUX:
+        cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
+                              info, keep_languages, sort_languages, gpu_info, use_gpu)
+        print(f'🔁 Container Remux: {src.name} -> {out_path.name}')
+        if not dry_run:
+            code, out, err = run(cmd, show_progress=True, duration=duration)
+            if code == 130:  # Interrupted
+                return 'interrupted', auto_yes
+            elif code != 0:
+                print(err, file=sys.stderr)
+                return 'error', auto_yes
+        return 'remuxed', auto_yes
 
     cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
                           info, keep_languages, sort_languages, gpu_info, use_gpu)
-    if mode == 'remux_audio':
+    if mode == Action.REMUX_AUDIO:
         action = 'remux+audio'
-    elif mode == 'transcode_video':
+    elif mode == Action.TRANCODE_VIDEO:
         action = 'video-only'
-    else:
+    else:  # Action.TRANCODE_ALL
         action = 'transcode'
     hdr_status = " HDR→SDR" if info.get('is_hdr', False) else ""
     gpu_status = f" ({gpu_info['platform'].upper()})" if use_gpu and gpu_info and gpu_info['available'] else ""
@@ -938,6 +954,9 @@ def main():
     ap.add_argument('--keep-languages', type=str, help='Sprachen beibehalten (Komma-getrennt, z.B. de,en,jp)')
     ap.add_argument('--sort-languages', type=str, help='Sprachen-Reihenfolge (Komma-getrennt, z.B. de,en)')
     
+    # Action filtering
+    ap.add_argument('--action-filter', type=str, help='Nur Dateien verarbeiten, die diese Aktion benötigen (container_remux, remux_audio, transcode_video, transcode_all)')
+    
     args = ap.parse_args()
 
     # Validate CRF value
@@ -953,6 +972,20 @@ def main():
     sort_languages = []
     if args.sort_languages:
         sort_languages = [normalize_language(lang.strip()) for lang in args.sort_languages.split(',')]
+
+    # Parse action filter
+    action_filter = None
+    if args.action_filter:
+        valid_actions = {
+            'container_remux': Action.CONTAINER_REMUX,
+            'remux_audio': Action.REMUX_AUDIO,
+            'transcode_video': Action.TRANCODE_VIDEO,
+            'transcode_all': Action.TRANCODE_ALL
+        }
+        if args.action_filter not in valid_actions:
+            print(f'Fehler: Ungültiger action-filter. Gültige Werte: {", ".join(valid_actions.keys())}', file=sys.stderr)
+            sys.exit(2)
+        action_filter = valid_actions[args.action_filter]
 
     if shutil.which('ffmpeg') is None or shutil.which('ffprobe') is None:
         print('Fehler: ffmpeg/ffprobe nicht gefunden. Bitte in PATH verfügbar machen.', file=sys.stderr)
@@ -1026,10 +1059,10 @@ def main():
         target_dir = out_dir if out_dir else root.parent
         try:
             res, auto_yes = process_file(root, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False))
+                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter)
             if res in ('converted',):
                 converted += 1
-            elif res in ('skipped', 'planned'):
+            elif res in ('skipped', 'planned', 'filtered'):
                 skipped += 1
             elif res in ('remuxed',):
                 remuxed += 1
@@ -1058,10 +1091,10 @@ def main():
             target_dir = out_dir if out_dir else p.parent
             try:
                 res, auto_yes = process_file(p, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False))
+                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter)
                 if res in ('converted',):
                     converted += 1
-                elif res in ('skipped', 'planned'):
+                elif res in ('skipped', 'planned', 'filtered'):
                     skipped += 1
                 elif res in ('remuxed',):
                     remuxed += 1
