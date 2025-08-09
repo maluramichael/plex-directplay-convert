@@ -1,7 +1,6 @@
 # 🎬 Plex DirectPlay Converter
 
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://python.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![FFmpeg Required](https://img.shields.io/badge/requires-FFmpeg-red.svg)](https://ffmpeg.org)
 
 Ein leistungsstarkes Python-Tool zur automatischen Konvertierung von Videodateien für **Apple TV 4K (3. Generation, 2022)** und **Plex Direct Play** Kompatibilität.
@@ -17,10 +16,17 @@ Ein leistungsstarkes Python-Tool zur automatischen Konvertierung von Videodateie
 ### 🚀 **Intelligente Verarbeitung**
 - **Smart Detection:** Erkennt bereits kompatible Dateien
 - **Selective Processing:** Transkodiert nur was nötig ist
+  - `container_remux`: Nur Container zu MP4 ändern
   - `remux_audio`: Nur Audio zu AAC Stereo
   - `transcode_video`: Nur Video zu H.264 
   - `transcode_all`: Vollständige Konvertierung
   - `skip`: Bereits kompatible Dateien
+
+### ⚡ **GPU-Beschleunigung**
+- **VideoToolbox** (macOS): Native Metal-Unterstützung
+- **NVIDIA NVENC** (Windows/Linux): Hardware-Encoding
+- **Intel QuickSync** (Windows/Linux): Integrierte GPU-Unterstützung
+- **Automatische Erkennung** verfügbarer Hardware-Encoder
 
 ### 📊 **Fortschrittsanzeige**
 - **Real-time Progress Bar** mit visueller Anzeige
@@ -38,6 +44,13 @@ Ein leistungsstarkes Python-Tool zur automatischen Konvertierung von Videodateie
 - **Sammelmodus:** CSV-Export aller Datei-Informationen
 - **Dry-Run:** Vorschau ohne tatsächliche Konvertierung
 - **Debug-Modus:** FFmpeg-Befehle anzeigen
+- **Action-Filter:** Nur bestimmte Verarbeitungstypen ausführen
+
+### 🛠️ **Erweiterte Funktionen**
+- **Graceful Shutdown:** Sauberer Abbruch mit Ctrl+C
+- **Temporäre Dateien:** Sichere Verarbeitung mit automatischer Bereinigung
+- **Original-Datei-Löschung:** Optional nach erfolgreicher Konvertierung
+- **Fortschrittsüberwachung:** Detaillierte ETA und Performance-Metriken
 
 ## 📋 Voraussetzungen
 
@@ -61,23 +74,6 @@ sudo apt install ffmpeg
 #### Windows
 1. Download von [ffmpeg.org](https://ffmpeg.org/download.html)
 2. FFmpeg zum System PATH hinzufügen
-
-## 🚀 Installation
-
-### Option 1: Direkter Download
-```bash
-# Skript herunterladen
-curl -O https://raw.githubusercontent.com/yourusername/ffmpeg_converter/main/plex_directplay_convert.py
-
-# Ausführbar machen (Linux/macOS)
-chmod +x plex_directplay_convert.py
-```
-
-### Option 2: Repository klonen
-```bash
-git clone https://github.com/yourusername/ffmpeg_converter.git
-cd ffmpeg_converter
-```
 
 ## 📖 Verwendung
 
@@ -137,6 +133,32 @@ python plex_directplay_convert.py /ordner --sort-languages de,en
 python plex_directplay_convert.py /ordner --keep-languages de,en,jp --sort-languages de,en
 ```
 
+### ⚡ **GPU-Beschleunigung**
+```bash
+# GPU-Beschleunigung aktivieren (automatische Erkennung)
+python plex_directplay_convert.py /pfad/zum/ordner --use-gpu
+
+# Mit GPU und optimierten Einstellungen
+python plex_directplay_convert.py /pfad/zum/ordner --use-gpu --crf 20 --preset medium
+```
+
+### 🗑️ **Original-Dateien löschen**
+```bash
+# Originaldateien nach erfolgreicher Konvertierung löschen
+python plex_directplay_convert.py /pfad/zum/ordner --delete-original
+
+# Vorsichtig: Erst testen mit dry-run
+python plex_directplay_convert.py /pfad/zum/ordner --delete-original --dry-run
+```
+
+### 🎯 **Action-Filter**
+```bash
+# Nur bestimmte Verarbeitungstypen ausführen
+python plex_directplay_convert.py /ordner --action-filter container_remux
+python plex_directplay_convert.py /ordner --action-filter transcode_video
+python plex_directplay_convert.py /ordner --action-filter transcode_all
+```
+
 ### 🔍 **Dry-Run Modus**
 ```bash
 # Zeigt nur was passieren würde, ohne zu konvertieren
@@ -148,14 +170,17 @@ python plex_directplay_convert.py /pfad/zum/ordner --dry-run
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
 | `--out` | In-Place | Zielordner für konvertierte Dateien |
-| `--crf` | `22` | Video-Qualität (18=verlustlos, 28=komprimiert) |
-| `--preset` | `medium` | Encoding-Geschwindigkeit (ultrafast...placebo) |
+| `--crf` | `22` | Video-Qualität (0-51, niedriger = bessere Qualität) |
+| `--preset` | `medium` | Encoding-Geschwindigkeit (ultrafast...veryslow) |
+| `--use-gpu` | - | GPU-Beschleunigung verwenden |
 | `--dry-run` | - | Vorschau ohne Konvertierung |
 | `--interactive` | - | Interaktiver Modus mit Bestätigung |
 | `--debug` | - | Zeigt FFmpeg-Befehle |
 | `--gather` | - | CSV-Analyse-Modus |
 | `--keep-languages` | - | Sprachen beibehalten (de,en,jp) |
 | `--sort-languages` | - | Sprach-Reihenfolge (de,en) |
+| `--action-filter` | - | Nur bestimmte Aktionstypen verarbeiten |
+| `--delete-original` | - | Originaldateien nach Konvertierung löschen |
 
 ## 🎬 Unterstützte Formate
 
@@ -180,6 +205,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --dry-run
 🎥 Video Codec: hevc (HDR)
 🔊 Audio: dts (6ch, en), ac3 (6ch, de)
 💬 Subtitles: en, de
+🍎 GPU: Metal (h264_videotoolbox)
 📤 Ausgabe: /Movies/Movie.mp4
 🎯 Aktion: Video zu H.264 + HDR→SDR Konvertierung + Audio zu AAC Stereo konvertieren
 
@@ -191,7 +217,7 @@ Fortfahren? (j)a / (n)ein / (a)lle / (q)uit: j
 
 ### Fortschrittsanzeige
 ```
-🎯 transcode HDR→SDR: Movie.mkv -> Movie.mp4 (v:hevc a:dts,ac3)
+🎯 transcode HDR→SDR (METAL): Movie.mkv -> Movie.mp4 (v:hevc a:dts,ac3)
 [████████████░░░░░░░░░░░░░░░░░░] 40.2% | 0:15:20/0:38:10 | ETA: 0:22:50 | 2.1x | 45.2fps
 ```
 
@@ -226,17 +252,26 @@ python plex_directplay_convert.py /media/movies \
   --out /converted/movies \
   --crf 22 \
   --preset medium \
+  --use-gpu \
   --keep-languages de,en \
-  --sort-languages de,en
+  --sort-languages de,en \
+  --delete-original
 ```
 
 ## 🔧 Technische Details
 
 ### HDR zu SDR Konvertierung
 Das Skript verwendet fortschrittliche Tone-Mapping-Techniken:
+
+**Software-Tonmapping (CPU):**
 ```bash
 -vf "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
 -color_primaries bt709 -color_trc bt709 -colorspace bt709
+```
+
+**Hardware-Tonmapping (GPU):**
+```bash
+-color_primaries bt709 -color_trc bt709 -colorspace bt709  # Vereinfachtes GPU-Mapping
 ```
 
 ### Sprach-Normalisierung
@@ -268,8 +303,15 @@ which ffprobe
 
 ### Performance-Probleme
 - Verwende `--preset ultrafast` für schnellere Konvertierung
+- Aktiviere GPU-Beschleunigung mit `--use-gpu`
 - Reduziere `--crf` Wert für bessere Performance
 - Schließe andere ressourcenintensive Programme
+
+### GPU-Probleme
+- Stelle sicher, dass aktuelle GPU-Treiber installiert sind
+- Bei macOS: VideoToolbox ist ab macOS 10.13+ verfügbar
+- Bei NVIDIA: Verwende aktuelle NVIDIA-Treiber
+- Bei Intel: QuickSync erfordert unterstützte Hardware
 
 ## 📄 CSV-Analyse Format
 
@@ -303,8 +345,10 @@ python plex_directplay_convert.py /media/raw \
   --out /media/converted \
   --crf 20 \
   --preset medium \
+  --use-gpu \
   --keep-languages de,en \
-  --sort-languages de,en
+  --sort-languages de,en \
+  --delete-original
 
 # 3. Ergebnisse überprüfen
 python plex_directplay_convert.py /media/converted --gather final_report.csv
@@ -316,6 +360,7 @@ python plex_directplay_convert.py /media/converted --gather final_report.csv
 python plex_directplay_convert.py /path/to/movie.mkv \
   --interactive \
   --debug \
+  --use-gpu \
   --crf 18 \
   --preset slow
 ```
