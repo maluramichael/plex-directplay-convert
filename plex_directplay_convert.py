@@ -4,14 +4,31 @@ plex_directplay_convert.py
 
 Rekursiv alle Videodateien für Apple TV 4K (3. Gen, 2022) + Plex fit machen:
 - Container: MP4
-- Video: HEVC (H.265) -> libx264 (falls nicht schon HEVC). Apple-Kompatibilität via -tag:v hvc1
-- Audio: auf Stereo (2.0) AAC transkodieren
-- Optional: nur remuxen, wenn schon kompatibel
+- Video: H.264 SDR (HDR→SDR Tonmapping falls nötig)  
+- Audio: Stereo (2.0) AAC, Sprach-Filter/Sortierung möglich
+- Fortschrittsanzeige mit ETA während Konvertierung
 
 Nutzung:
-  python plex_directplay_convert.py /pfad/zum/ordner [--out /ziel/ordner] [--crf 22] [--preset medium] [--dry-run] [--interactive]
-  python plex_directplay_convert.py /pfad/zur/datei.mkv [--out /ziel/ordner] [--interactive]
+  python plex_directplay_convert.py /pfad/zum/ordner [Optionen]
+  python plex_directplay_convert.py /pfad/zur/datei.mkv [Optionen]
   python plex_directplay_convert.py /pfad/zum/ordner --gather analyse.csv
+
+Video-Qualität:
+  --crf 18          Hohe Qualität (größere Dateien)
+  --crf 22          Standard Qualität (empfohlen)  
+  --crf 26          Niedrigere Qualität (kleinere Dateien)
+  --preset slow     Bessere Kompression (langsamer)
+  --preset medium   Standard (empfohlen)
+  --preset fast     Schnellere Kodierung (größere Dateien)
+
+Sprachen:
+  --keep-languages de,en    Nur Deutsche und Englische Spuren behalten
+  --sort-languages de,en    Deutsche Spur zuerst, dann Englische
+
+Modi:
+  --interactive     Zeigt Details, fragt vor jeder Datei
+  --debug          Zeigt ffmpeg-Befehl (mit --interactive)
+  --dry-run        Simulation ohne tatsächliche Konvertierung
 
 Erfordert: ffmpeg, ffprobe im PATH
 """
@@ -21,6 +38,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -29,6 +47,10 @@ from datetime import datetime, timedelta
 from pathlib import Path, PurePath
 
 VIDEO_EXTS = {'.mkv', '.mp4', '.m4v', '.mov', '.avi', '.wmv', '.flv', '.ts', '.m2ts', '.webm'}
+
+# Global variable to track current ffmpeg process for signal handling
+current_ffmpeg_process = None
+interrupted = False
 
 # Language code mapping - maps various language codes to standardized 2-letter codes
 LANGUAGE_MAP = {
@@ -53,6 +75,44 @@ def normalize_language(lang_code):
     if not lang_code:
         return 'unknown'
     return LANGUAGE_MAP.get(lang_code.lower(), lang_code.lower())
+
+def signal_handler(signum, frame):
+    """Handle Ctrl+C and other signals gracefully"""
+    global current_ffmpeg_process, interrupted
+    
+    print(f"\n\n🛑 Unterbrechung erkannt (Signal {signum})")
+    interrupted = True
+    
+    if current_ffmpeg_process and current_ffmpeg_process.poll() is None:
+        print("⏹️  Beende ffmpeg-Prozess graceful...")
+        try:
+            # Send SIGTERM first (graceful termination)
+            current_ffmpeg_process.terminate()
+            
+            # Wait up to 5 seconds for graceful termination
+            try:
+                current_ffmpeg_process.wait(timeout=5)
+                print("✅ FFmpeg-Prozess erfolgreich beendet")
+            except subprocess.TimeoutExpired:
+                # Force kill if it doesn't terminate gracefully
+                print("🔨 FFmpeg antwortet nicht, beende forciert...")
+                current_ffmpeg_process.kill()
+                current_ffmpeg_process.wait()
+                print("✅ FFmpeg-Prozess forciert beendet")
+        except Exception as e:
+            print(f"⚠️  Fehler beim Beenden des FFmpeg-Prozesses: {e}")
+    
+    print("👋 Programm beendet")
+    sys.exit(1)
+
+def setup_signal_handlers():
+    """Setup signal handlers for graceful shutdown"""
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Termination request
+    
+    # On Unix systems, also handle SIGHUP
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, signal_handler)
 
 def filter_and_sort_streams(streams, languages, keep_languages=None, sort_languages=None):
     """Filter and sort streams based on language preferences"""
@@ -206,6 +266,12 @@ class ProgressMonitor:
 
 def run(cmd, show_progress=False, duration=None):
     """Execute command with optional progress monitoring"""
+    global current_ffmpeg_process, interrupted
+    
+    # Check if we were interrupted before starting
+    if interrupted:
+        return 130, "", "Process interrupted"
+    
     # Ensure command list contains strings for Windows compatibility
     cmd_str = [str(c) for c in cmd]
     
@@ -221,34 +287,58 @@ def run(cmd, show_progress=False, duration=None):
     p = subprocess.Popen(cmd_str, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
                         text=True, universal_newlines=True)
     
+    # Track the current ffmpeg process globally for signal handling
+    current_ffmpeg_process = p
+    
     stdout_lines = []
     stderr_lines = []
     
-    # Read stderr in real-time for progress updates
-    while True:
-        stderr_line = p.stderr.readline()
-        if stderr_line == '' and p.poll() is not None:
-            break
-        
-        if stderr_line:
-            stderr_lines.append(stderr_line)
+    try:
+        # Read stderr in real-time for progress updates
+        while True:
+            # Check for interruption
+            if interrupted:
+                print(f"\n🛑 Prozess wurde unterbrochen")
+                break
+                
+            stderr_line = p.stderr.readline()
+            if stderr_line == '' and p.poll() is not None:
+                break
             
-            # Parse progress and update display
-            if progress.parse_progress_line(stderr_line):
-                progress.update_display()
+            if stderr_line:
+                stderr_lines.append(stderr_line)
+                
+                # Parse progress and update display
+                if progress.parse_progress_line(stderr_line):
+                    progress.update_display()
+        
+        # Get remaining output
+        stdout, stderr_remaining = p.communicate()
+        if stdout:
+            stdout_lines.append(stdout)
+        if stderr_remaining:
+            stderr_lines.append(stderr_remaining)
+        
+    except KeyboardInterrupt:
+        # This shouldn't happen as we handle it globally, but just in case
+        print(f"\n🛑 KeyboardInterrupt im Prozess")
+        interrupted = True
     
-    # Get remaining output
-    stdout, stderr_remaining = p.communicate()
-    if stdout:
-        stdout_lines.append(stdout)
-    if stderr_remaining:
-        stderr_lines.append(stderr_remaining)
+    finally:
+        # Clear the global process reference
+        current_ffmpeg_process = None
     
-    # Final progress update
-    if show_progress:
+    # Final progress update (only if not interrupted)
+    if show_progress and not interrupted:
         progress.progress_percent = 100
         print(progress.get_progress_line())
         print()  # New line after progress bar
+    elif interrupted:
+        print()  # New line after interruption
+    
+    # Return appropriate exit code
+    if interrupted:
+        return 130, '\n'.join(stdout_lines), '\n'.join(stderr_lines)  # 130 = interrupted by Ctrl+C
     
     return p.returncode, '\n'.join(stdout_lines), '\n'.join(stderr_lines)
 
@@ -651,7 +741,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
             print(f'🔁 Remux (nur Container ändern): {src.name} -> {out_path.name}')
             if not dry_run:
                 code, out, err = run(cmd, show_progress=True, duration=duration)
-                if code != 0:
+                if code == 130:  # Interrupted
+                    return 'interrupted', auto_yes
+                elif code != 0:
                     print(err, file=sys.stderr)
                     return 'error', auto_yes
             return 'remuxed', auto_yes
@@ -672,24 +764,44 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     if dry_run:
         return 'planned', auto_yes
     code, out, err = run(cmd, show_progress=True, duration=duration)
-    if code != 0:
+    if code == 130:  # Interrupted
+        return 'interrupted', auto_yes
+    elif code != 0:
         print(err, file=sys.stderr)
         return 'error', auto_yes
     return 'converted', auto_yes
 
 def main():
+    # Setup signal handlers for graceful shutdown
+    setup_signal_handlers()
+    
     ap = argparse.ArgumentParser(description='Plex Direct Play Konverter für Apple TV 4K (3. Gen)')
     ap.add_argument('root', type=Path, help='Wurzelverzeichnis (rekursiv) oder einzelne Datei')
     ap.add_argument('--out', type=Path, default=None, help='Zielordner (Standard: in-place neben Original)')
-    ap.add_argument('--crf', type=int, default=22, help='x265 CRF (Qualität, niedriger = besser/breiter)')
-    ap.add_argument('--preset', type=str, default='medium', help='x265 Preset (ultrafast..placebo)')
+    
+    # Video encoding parameters
+    ap.add_argument('--crf', type=int, default=22, 
+                    help='Constant Rate Factor für x264 (0-51, niedriger = besser Qualität, Standard: 22)')
+    ap.add_argument('--preset', type=str, default='medium',
+                    choices=['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'],
+                    help='x264 Encoding Preset - schneller = größere Datei (Standard: medium)')
+    
+    # Operation modes
     ap.add_argument('--dry-run', action='store_true', help='Nur zeigen, was passieren würde')
     ap.add_argument('--interactive', '-i', action='store_true', help='Interaktiver Modus: Zeigt Details und fragt nach Bestätigung')
     ap.add_argument('--debug', action='store_true', help='Debug-Modus: Zeigt ffmpeg-Befehl in interaktivem Modus')
     ap.add_argument('--gather', '-g', type=Path, help='Sammelmodus: Analysiert alle Dateien und speichert Informationen in CSV-Datei')
+    
+    # Language handling
     ap.add_argument('--keep-languages', type=str, help='Sprachen beibehalten (Komma-getrennt, z.B. de,en,jp)')
     ap.add_argument('--sort-languages', type=str, help='Sprachen-Reihenfolge (Komma-getrennt, z.B. de,en)')
+    
     args = ap.parse_args()
+
+    # Validate CRF value
+    if not 0 <= args.crf <= 51:
+        print('Fehler: CRF muss zwischen 0 und 51 liegen', file=sys.stderr)
+        sys.exit(2)
 
     # Parse language arguments
     keep_languages = []
@@ -747,6 +859,7 @@ def main():
     skipped = 0
     errors = 0
     remuxed = 0
+    interrupted_count = 0
     auto_yes = False
 
     # Handle single file or directory
@@ -767,6 +880,9 @@ def main():
                 skipped += 1
             elif res in ('remuxed',):
                 remuxed += 1
+            elif res in ('interrupted',):
+                interrupted_count += 1
+                # For single file, just mark as interrupted and continue to summary
             else:
                 errors += 1
         except Exception as e:
@@ -775,6 +891,11 @@ def main():
     else:
         # Directory processing (recursive)
         for p in root.rglob('*'):
+            # Check for global interruption
+            if interrupted:
+                print(f"\n🛑 Verarbeitung unterbrochen")
+                break
+                
             if not p.is_file():
                 continue
             if p.suffix.lower() not in VIDEO_EXTS:
@@ -791,13 +912,20 @@ def main():
                     skipped += 1
                 elif res in ('remuxed',):
                     remuxed += 1
+                elif res in ('interrupted',):
+                    interrupted_count += 1
+                    break  # Exit early on interruption
                 else:
                     errors += 1
             except Exception as e:
                 print(f'Fehler bei {p}: {e}', file=sys.stderr)
                 errors += 1
 
-    print(f'\nFertig. Dateien: {total} | konvertiert: {converted} | remuxt: {remuxed} | übersprungen/geplant: {skipped} | Fehler: {errors}')
+    # Final summary
+    if interrupted_count > 0:
+        print(f'\n🛑 Unterbrochen. Dateien: {total} | konvertiert: {converted} | remuxt: {remuxed} | übersprungen/geplant: {skipped} | unterbrochen: {interrupted_count} | Fehler: {errors}')
+    else:
+        print(f'\nFertig. Dateien: {total} | konvertiert: {converted} | remuxt: {remuxed} | übersprungen/geplant: {skipped} | Fehler: {errors}')
 
 if __name__ == '__main__':
     main()
