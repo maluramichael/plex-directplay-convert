@@ -1,19 +1,19 @@
-# 🎬 Plex DirectPlay Converter
+# Plex DirectPlay Converter
 
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://python.org)
 [![FFmpeg Required](https://img.shields.io/badge/requires-FFmpeg-red.svg)](https://ffmpeg.org)
 
 Ein leistungsstarkes Python-Tool zur automatischen Konvertierung von Videodateien für **Apple TV 4K (3. Generation, 2022)** und **Plex Direct Play** Kompatibilität.
 
-## ✨ Features
+## Features
 
-### 🎯 **Optimiert für Apple TV 4K Direct Play**
+### **Optimiert für Apple TV 4K Direct Play**
 - **Container:** Automatische Konvertierung zu MP4
 - **Video:** H.264 (libx264) mit SDR-Unterstützung
 - **Audio:** AAC Stereo (2.0) für beste Kompatibilität
 - **HDR zu SDR:** Intelligente Tone-Mapping für HDR-Inhalte
 
-### 🚀 **Intelligente Verarbeitung**
+### **Intelligente Verarbeitung**
 - **Smart Detection:** Erkennt bereits kompatible Dateien
 - **Selective Processing:** Transkodiert nur was nötig ist
   - `container_remux`: Nur Container zu MP4 ändern
@@ -22,37 +22,37 @@ Ein leistungsstarkes Python-Tool zur automatischen Konvertierung von Videodateie
   - `transcode_all`: Vollständige Konvertierung
   - `skip`: Bereits kompatible Dateien
 
-### ⚡ **GPU-Beschleunigung**
+### **GPU-Beschleunigung**
 - **VideoToolbox** (macOS): Native Metal-Unterstützung
 - **NVIDIA NVENC** (Windows/Linux): Hardware-Encoding
 - **Intel QuickSync** (Windows/Linux): Integrierte GPU-Unterstützung
 - **Automatische Erkennung** verfügbarer Hardware-Encoder
 
-### 📊 **Fortschrittsanzeige**
+### **Fortschrittsanzeige**
 - **Real-time Progress Bar** mit visueller Anzeige
 - **ETA Berechnung** für verbleibende Zeit
 - **Performance Metriken** (FPS, Bitrate, Speed)
 - **Zeitanzeige** (Current/Total, Elapsed)
 
-### 🌍 **Mehrsprachige Unterstützung**
+### **Mehrsprachige Unterstützung**
 - **Sprach-Filterung:** Bestimmte Sprachen beibehalten
 - **Sprach-Priorisierung:** Reihenfolge der Audio-Streams festlegen
 - **Standardisierte Codes:** Automatische Normalisierung von Sprachcodes
 
-### 🔍 **Analyse-Modi**
+### **Analyse-Modi**
 - **Interaktiver Modus:** Datei-Details anzeigen und Bestätigung
 - **Sammelmodus:** CSV-Export aller Datei-Informationen
 - **Dry-Run:** Vorschau ohne tatsächliche Konvertierung
 - **Debug-Modus:** FFmpeg-Befehle anzeigen
 - **Action-Filter:** Nur bestimmte Verarbeitungstypen ausführen
 
-### 🛠️ **Erweiterte Funktionen**
+### **Erweiterte Funktionen**
 - **Graceful Shutdown:** Sauberer Abbruch mit Ctrl+C
 - **Temporäre Dateien:** Sichere Verarbeitung mit automatischer Bereinigung
 - **Original-Datei-Löschung:** Optional nach erfolgreicher Konvertierung
 - **Fortschrittsüberwachung:** Detaillierte ETA und Performance-Metriken
 
-## 📋 Voraussetzungen
+## Voraussetzungen
 
 ### System-Anforderungen
 - **Python 3.6+**
@@ -75,14 +75,14 @@ sudo apt install ffmpeg
 1. Download von [ffmpeg.org](https://ffmpeg.org/download.html)
 2. FFmpeg zum System PATH hinzufügen
 
-## 📖 Verwendung
+## Verwendung
 
 ### Grundlegende Syntax
 ```bash
 python plex_directplay_convert.py <INPUT> [OPTIONS]
 ```
 
-### 📁 **Ordner verarbeiten (rekursiv)**
+### **Ordner verarbeiten (rekursiv)**
 ```bash
 # Alle Videos im Ordner konvertieren
 python plex_directplay_convert.py /pfad/zum/video/ordner
@@ -94,7 +94,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --out /ziel/ordner
 python plex_directplay_convert.py /pfad/zum/ordner --crf 20 --preset fast
 ```
 
-### 📄 **Einzelne Datei verarbeiten**
+### **Einzelne Datei verarbeiten**
 ```bash
 # Einzelne Videodatei konvertieren
 python plex_directplay_convert.py /pfad/zur/datei.mkv
@@ -103,7 +103,7 @@ python plex_directplay_convert.py /pfad/zur/datei.mkv
 python plex_directplay_convert.py /pfad/zur/datei.mkv --out /ziel/ordner
 ```
 
-### 🎮 **Interaktiver Modus**
+### **Interaktiver Modus**
 ```bash
 # Zeigt Details und fragt nach Bestätigung für jede Datei
 python plex_directplay_convert.py /pfad/zum/ordner --interactive
@@ -112,7 +112,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --interactive
 python plex_directplay_convert.py /pfad/zum/ordner --interactive --debug
 ```
 
-### 📊 **Analyse-Modus (CSV Export)**
+### **Analyse-Modus (CSV Export)**
 ```bash
 # Analysiert alle Dateien und erstellt CSV-Report
 python plex_directplay_convert.py /pfad/zum/ordner --gather analyse.csv
@@ -121,7 +121,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --gather analyse.csv
 python plex_directplay_convert.py datei.mkv --gather bericht.csv
 ```
 
-### 🌍 **Sprach-Management**
+### **Sprach-Management**
 ```bash
 # Nur bestimmte Sprachen beibehalten
 python plex_directplay_convert.py /ordner --keep-languages de,en,jp
@@ -133,7 +133,7 @@ python plex_directplay_convert.py /ordner --sort-languages de,en
 python plex_directplay_convert.py /ordner --keep-languages de,en,jp --sort-languages de,en
 ```
 
-### ⚡ **GPU-Beschleunigung**
+### **GPU-Beschleunigung**
 ```bash
 # GPU-Beschleunigung aktivieren (automatische Erkennung)
 python plex_directplay_convert.py /pfad/zum/ordner --use-gpu
@@ -142,7 +142,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --use-gpu
 python plex_directplay_convert.py /pfad/zum/ordner --use-gpu --crf 20 --preset medium
 ```
 
-### 🗑️ **Original-Dateien löschen**
+### **Original-Dateien löschen**
 ```bash
 # Originaldateien nach erfolgreicher Konvertierung löschen
 python plex_directplay_convert.py /pfad/zum/ordner --delete-original
@@ -151,7 +151,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --delete-original
 python plex_directplay_convert.py /pfad/zum/ordner --delete-original --dry-run
 ```
 
-### 🎯 **Action-Filter**
+### **Action-Filter**
 ```bash
 # Nur bestimmte Verarbeitungstypen ausführen
 python plex_directplay_convert.py /ordner --action-filter container_remux
@@ -159,13 +159,13 @@ python plex_directplay_convert.py /ordner --action-filter transcode_video
 python plex_directplay_convert.py /ordner --action-filter transcode_all
 ```
 
-### 🔍 **Dry-Run Modus**
+### **Dry-Run Modus**
 ```bash
 # Zeigt nur was passieren würde, ohne zu konvertieren
 python plex_directplay_convert.py /pfad/zum/ordner --dry-run
 ```
 
-## ⚙️ Parameter-Referenz
+## Parameter-Referenz
 
 | Parameter | Standard | Beschreibung |
 |-----------|----------|--------------|
@@ -182,7 +182,7 @@ python plex_directplay_convert.py /pfad/zum/ordner --dry-run
 | `--action-filter` | - | Nur bestimmte Aktionstypen verarbeiten |
 | `--delete-original` | - | Originaldateien nach Konvertierung löschen |
 
-## 🎬 Unterstützte Formate
+## Unterstützte Formate
 
 ### Input-Formate
 - `.mkv`, `.mp4`, `.m4v`, `.mov`
@@ -194,22 +194,22 @@ python plex_directplay_convert.py /pfad/zum/ordner --dry-run
 - **Video:** H.264 (SDR)
 - **Audio:** AAC Stereo (192 kbps)
 
-## 📊 Beispiel-Output
+## Beispiel-Output
 
 ### Interaktiver Modus
 ```
 ============================================================
-📁 Datei: /Movies/Movie.mkv
-📏 Größe: 8.2 GB
-📦 Container: MKV
-🎥 Video Codec: hevc (HDR)
-🔊 Audio: dts (6ch, en), ac3 (6ch, de)
-💬 Subtitles: en, de
-🍎 GPU: Metal (h264_videotoolbox)
-📤 Ausgabe: /Movies/Movie.mp4
-🎯 Aktion: Video zu H.264 + HDR→SDR Konvertierung + Audio zu AAC Stereo konvertieren
+Datei: /Movies/Movie.mkv
+Größe: 8.2 GB
+Container: MKV
+Video Codec: hevc (HDR)
+Audio: dts (6ch, en), ac3 (6ch, de)
+Subtitles: en, de
+GPU: Metal (h264_videotoolbox)
+Ausgabe: /Movies/Movie.mp4
+Aktion: Video zu H.264 + HDR→SDR Konvertierung + Audio zu AAC Stereo konvertieren
 
-🔧 FFmpeg Befehl:
+FFmpeg Befehl:
    ffmpeg -y -hide_banner -loglevel warning -i "/Movies/Movie.mkv" ...
 ============================================================
 Fortfahren? (j)a / (n)ein / (a)lle / (q)uit: j
@@ -217,7 +217,7 @@ Fortfahren? (j)a / (n)ein / (a)lle / (q)uit: j
 
 ### Fortschrittsanzeige
 ```
-🎯 transcode HDR→SDR (METAL): Movie.mkv -> Movie.mp4 (v:hevc a:dts,ac3)
+transcode HDR→SDR (METAL): Movie.mkv -> Movie.mp4 (v:hevc a:dts,ac3)
 [████████████░░░░░░░░░░░░░░░░░░] 40.2% | 0:15:20/0:38:10 | ETA: 0:22:50 | 2.1x | 45.2fps
 ```
 
@@ -233,7 +233,7 @@ Analysierte Dateien: 156
 Direct Play kompatibel: 23/156 (14.7%)
 ```
 
-## 🎯 Optimierungsstrategien
+## Optimierungsstrategien
 
 ### Qualitätseinstellungen
 - **Hohe Qualität:** `--crf 18` (große Dateien)
@@ -258,7 +258,7 @@ python plex_directplay_convert.py /media/movies \
   --delete-original
 ```
 
-## 🔧 Technische Details
+## Technische Details
 
 ### HDR zu SDR Konvertierung
 Das Skript verwendet fortschrittliche Tone-Mapping-Techniken:
@@ -283,7 +283,7 @@ Unterstützte Sprachcodes:
 - **Spanisch:** `es`, `esp`, `spa`, `spanish`
 - **Italienisch:** `it`, `ita`, `italian`
 
-## 🐛 Problembehandlung
+## Problembehandlung
 
 ### FFmpeg nicht gefunden
 ```bash
@@ -313,7 +313,7 @@ which ffprobe
 - Bei NVIDIA: Verwende aktuelle NVIDIA-Treiber
 - Bei Intel: QuickSync erfordert unterstützte Hardware
 
-## 📄 CSV-Analyse Format
+## CSV-Analyse Format
 
 Die CSV-Ausgabe enthält folgende Spalten:
 
@@ -330,7 +330,7 @@ Die CSV-Ausgabe enthält folgende Spalten:
 | `direct_play_compatible` | Apple TV kompatibel |
 | `action_needed` | Erforderliche Aktion |
 
-## 📚 Erweiterte Beispiele
+## Erweiterte Beispiele
 
 ### Produktions-Pipeline
 ```bash

@@ -88,11 +88,11 @@ def signal_handler(signum, frame):
     """Handle Ctrl+C and other signals gracefully"""
     global current_ffmpeg_process, interrupted
     
-    print(f"\n\n🛑 Unterbrechung erkannt (Signal {signum})")
+    print(f"\n\nUnterbrechung erkannt (Signal {signum})")
     interrupted = True
     
     if current_ffmpeg_process and current_ffmpeg_process.poll() is None:
-        print("⏹️  Beende ffmpeg-Prozess graceful...")
+        print("Beende ffmpeg-Prozess graceful...")
         try:
             # Send SIGTERM first (graceful termination)
             current_ffmpeg_process.terminate()
@@ -100,17 +100,17 @@ def signal_handler(signum, frame):
             # Wait up to 5 seconds for graceful termination
             try:
                 current_ffmpeg_process.wait(timeout=5)
-                print("✅ FFmpeg-Prozess erfolgreich beendet")
+                print("FFmpeg-Prozess erfolgreich beendet")
             except subprocess.TimeoutExpired:
                 # Force kill if it doesn't terminate gracefully
-                print("🔨 FFmpeg antwortet nicht, beende forciert...")
+                print("FFmpeg antwortet nicht, beende forciert...")
                 current_ffmpeg_process.kill()
                 current_ffmpeg_process.wait()
-                print("✅ FFmpeg-Prozess forciert beendet")
+                print("FFmpeg-Prozess forciert beendet")
         except Exception as e:
-            print(f"⚠️  Fehler beim Beenden des FFmpeg-Prozesses: {e}")
+            print(f"Fehler beim Beenden des FFmpeg-Prozesses: {e}")
     
-    print("👋 Programm beendet")
+    print("Programm beendet")
     sys.exit(1)
 
 def setup_signal_handlers():
@@ -170,7 +170,7 @@ def detect_gpu_acceleration():
             return gpu_info
             
     except Exception as e:
-        print(f"⚠️  GPU-Erkennung fehlgeschlagen: {e}")
+        print(f"GPU-Erkennung fehlgeschlagen: {e}")
     
     return gpu_info
 
@@ -402,7 +402,7 @@ def run(cmd, show_progress=False, duration=None):
         while True:
             # Check for interruption
             if interrupted:
-                print(f"\n🛑 Prozess wurde unterbrochen")
+                print(f"\nProzess wurde unterbrochen")
                 break
                 
             stderr_line = p.stderr.readline()
@@ -425,7 +425,7 @@ def run(cmd, show_progress=False, duration=None):
         
     except KeyboardInterrupt:
         # This shouldn't happen as we handle it globally, but just in case
-        print(f"\n🛑 KeyboardInterrupt im Prozess")
+        print(f"\nKeyboardInterrupt im Prozess")
         interrupted = True
     
     finally:
@@ -687,61 +687,61 @@ def format_file_size(size_bytes):
 
 def display_file_path(src: Path):
     """Display the file path"""
-    print(f"📁 File: {src}")
+    print(f"File: {src}")
 
 def display_file_info(src: Path, info: dict, mode: Action, out_path: Path, debug_cmd: list = None, gpu_info: dict = None, use_gpu: bool = False):
     """Display detailed file information"""
-    print(f"📏 Size: {format_file_size(src.stat().st_size)}")
-    print(f"📦 Container: {info['container'].upper()}")
+    print(f"Size: {format_file_size(src.stat().st_size)}")
+    print(f"Container: {info['container'].upper()}")
     
     if info['has_video']:
         hdr_status = " (HDR)" if info.get('is_hdr', False) else " (SDR)"
-        print(f"🎥 Video Codec: {info['video_codec'] or 'Unbekannt'}{hdr_status}")
+        print(f"Video Codec: {info['video_codec'] or 'Unbekannt'}{hdr_status}")
     else:
-        print("🎥 Video: Nicht vorhanden")
+        print("Video: Nicht vorhanden")
     
     if info['has_audio'] and info['audio_codecs']:
         audio_info = []
         for i, (codec, channels) in enumerate(zip(info['audio_codecs'], info['audio_channels'])):
             lang = info.get('audio_languages', ['unknown'] * len(info['audio_codecs']))[i]
             audio_info.append(f"{codec} ({channels}ch, {lang})")
-        print(f"🔊 Audio: {', '.join(audio_info)}")
+        print(f"Audio: {', '.join(audio_info)}")
     else:
-        print("🔊 Audio: Nicht vorhanden")
+        print("Audio: Nicht vorhanden")
     
     # Show subtitles if any
     if info.get('subtitle_languages'):
         sub_langs = ', '.join(set(info['subtitle_languages']))  # Remove duplicates
-        print(f"💬 Subtitles: {sub_langs}")
+        print(f"Subtitles: {sub_langs}")
     
     # Show GPU acceleration status
     if use_gpu:
         if gpu_info and gpu_info['available']:
-            platform_icons = {'metal': '🍎', 'nvidia': '🟢', 'intel': '🔵'}
-            icon = platform_icons.get(gpu_info['platform'], '⚡')
+            platform_icons = {'metal': 'METAL', 'nvidia': 'NVIDIA', 'intel': 'INTEL'}
+            icon = platform_icons.get(gpu_info['platform'], 'GPU')
             print(f"{icon} GPU: {gpu_info['platform'].title()} ({gpu_info['encoder']})")
         else:
-            print("⚠️  GPU: Angefordert, aber nicht verfügbar - verwende CPU")
+            print("GPU: Angefordert, aber nicht verfügbar - verwende CPU")
     
-    print(f"📤 Ausgabe: {out_path}")
+    print(f"Ausgabe: {out_path}")
     
     # Show what will be done
     if mode == Action.SKIP:
-        print("✅ Aktion: Bereits kompatibel - nichts zu tun")
+        print("Aktion: Bereits kompatibel - nichts zu tun")
     elif mode == Action.CONTAINER_REMUX:
-        print("🔄 Aktion: Nur Container zu MP4 ändern (remux)")
+        print("Aktion: Nur Container zu MP4 ändern (remux)")
     elif mode == Action.REMUX_AUDIO:
-        print("🔄 Aktion: Video kopieren, Audio zu AAC Stereo konvertieren")
+        print("Aktion: Video kopieren, Audio zu AAC Stereo konvertieren")
     elif mode == Action.TRANCODE_VIDEO:
         hdr_note = " + HDR→SDR Konvertierung" if info.get('is_hdr', False) else ""
-        print(f"🎯 Aktion: Video zu H.264{hdr_note} konvertieren, Audio kopieren")
+        print(f"Aktion: Video zu H.264{hdr_note} konvertieren, Audio kopieren")
     else:  # Action.TRANCODE_ALL
         hdr_note = " + HDR→SDR Konvertierung" if info.get('is_hdr', False) else ""
-        print(f"🎯 Aktion: Video zu H.264{hdr_note} + Audio zu AAC Stereo konvertieren")
+        print(f"Aktion: Video zu H.264{hdr_note} + Audio zu AAC Stereo konvertieren")
     
     # Show debug command if provided
     if debug_cmd:
-        print(f"\n🔧 FFmpeg Befehl:")
+        print(f"\nFFmpeg Befehl:")
         cmd_str = ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in debug_cmd)
         print(f"   {cmd_str}")
     
@@ -842,25 +842,25 @@ def handle_temp_file_cleanup(temp_path: Path, final_path: Path, src_path: Path, 
     try:
         # Move temporary file to final location
         temp_path.rename(final_path)
-        print(f'✅ Datei umbenannt: {temp_path.name} -> {final_path.name}')
+        print(f'Datei umbenannt: {temp_path.name} -> {final_path.name}')
         
         # Delete original file if requested
         if delete_original:
             try:
                 src_path.unlink()
-                print(f'🗑️  Originaldatei gelöscht: {src_path.name}')
+                print(f'Originaldatei gelöscht: {src_path.name}')
             except Exception as e:
-                print(f'⚠️  Fehler beim Löschen der Originaldatei {src_path.name}: {e}', file=sys.stderr)
+                print(f'Fehler beim Löschen der Originaldatei {src_path.name}: {e}', file=sys.stderr)
                 
     except Exception as e:
-        print(f'⚠️  Fehler beim Umbenennen der temporären Datei {temp_path.name}: {e}', file=sys.stderr)
+        print(f'Fehler beim Umbenennen der temporären Datei {temp_path.name}: {e}', file=sys.stderr)
         # Clean up temporary file on error
         try:
             if temp_path.exists():
                 temp_path.unlink()
-                print(f'🧹 Temporäre Datei entfernt: {temp_path.name}')
+                print(f'Temporäre Datei entfernt: {temp_path.name}')
         except Exception as cleanup_e:
-            print(f'⚠️  Fehler beim Entfernen der temporären Datei: {cleanup_e}', file=sys.stderr)
+            print(f'Fehler beim Entfernen der temporären Datei: {cleanup_e}', file=sys.stderr)
 
 def ask_user_confirmation():
     """Ask user for confirmation with options"""
@@ -883,7 +883,7 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     display_file_path(src)
     info = discover_media(src)
     if not info['has_video']:
-        print(f'⏭️  Kein Video: {src}')
+        print(f'Kein Video: {src}')
         return 'skipped', auto_yes
 
     out_name = src.stem + '.mp4'
@@ -924,13 +924,13 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
             auto_yes = True
 
     if mode == Action.SKIP:
-        print(f'✅ Bereits kompatibel: {src}')
+        print(f'Bereits kompatibel: {src}')
         return 'skipped', auto_yes
     elif mode == Action.CONTAINER_REMUX:
         cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
                               info, keep_languages, sort_languages, gpu_info, use_gpu)
         display_name = out_path.name if not temp_output else f'{out_path.name} -> {src.name}'
-        print(f'🔁 Container Remux: {src.name} -> {display_name}')
+        print(f'Container Remux: {src.name} -> {display_name}')
         if not dry_run:
             code, out, err = run(cmd, show_progress=True, duration=duration)
             if code == 130:  # Interrupted
@@ -959,9 +959,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
                 # Standard case - delete original file
                 try:
                     src.unlink()
-                    print(f'🗑️  Originaldatei gelöscht: {src.name}')
+                    print(f'Originaldatei gelöscht: {src.name}')
                 except Exception as e:
-                    print(f'⚠️  Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
+                    print(f'Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
         return 'remuxed', auto_yes
 
     cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
@@ -974,7 +974,7 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
         action = 'transcode'
     hdr_status = " HDR→SDR" if info.get('is_hdr', False) else ""
     gpu_status = f" ({gpu_info['platform'].upper()})" if use_gpu and gpu_info and gpu_info['available'] else ""
-    print(f'🎯 {action}{hdr_status}{gpu_status}: {src.name} -> {out_path.name} (v:{info["video_codec"]} a:{",".join(info["audio_codecs"] or ["-"])})')
+    print(f'{action}{hdr_status}{gpu_status}: {src.name} -> {out_path.name} (v:{info["video_codec"]} a:{",".join(info["audio_codecs"] or ["-"])})')
     if dry_run:
         return 'planned', auto_yes
     code, out, err = run(cmd, show_progress=True, duration=duration)
@@ -1004,9 +1004,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
         # Standard case - delete original file
         try:
             src.unlink()
-            print(f'🗑️  Originaldatei gelöscht: {src.name}')
+            print(f'Originaldatei gelöscht: {src.name}')
         except Exception as e:
-            print(f'⚠️  Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
+            print(f'Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
     return 'converted', auto_yes
 
 def main():
@@ -1079,11 +1079,11 @@ def main():
     if getattr(args, 'use_gpu', False):  # Handle potential missing attribute
         gpu_info = detect_gpu_acceleration()
         if gpu_info['available']:
-            platform_icons = {'metal': '🍎', 'nvidia': '🟢', 'intel': '🔵'}
-            icon = platform_icons.get(gpu_info['platform'], '⚡')
+            platform_icons = {'metal': 'METAL', 'nvidia': 'NVIDIA', 'intel': 'INTEL'}
+            icon = platform_icons.get(gpu_info['platform'], 'GPU')
             print(f"{icon} GPU-Beschleunigung erkannt: {gpu_info['platform'].title()} ({gpu_info['encoder']})")
         else:
-            print("⚠️  GPU-Beschleunigung angefordert, aber nicht verfügbar - verwende CPU-Kodierung")
+            print("GPU-Beschleunigung angefordert, aber nicht verfügbar - verwende CPU-Kodierung")
 
     root: Path = args.root
     if not root.exists():
@@ -1162,7 +1162,7 @@ def main():
         for p in root.rglob('*'):
             # Check for global interruption
             if interrupted:
-                print(f"\n🛑 Verarbeitung unterbrochen")
+                print(f"\nVerarbeitung unterbrochen")
                 break
                 
             if not p.is_file():
@@ -1192,7 +1192,7 @@ def main():
 
     # Final summary
     if interrupted_count > 0:
-        print(f'\n🛑 Unterbrochen. Dateien: {total} | konvertiert: {converted} | remuxt: {remuxed} | übersprungen/geplant: {skipped} | unterbrochen: {interrupted_count} | Fehler: {errors}')
+        print(f'\nUnterbrochen. Dateien: {total} | konvertiert: {converted} | remuxt: {remuxed} | übersprungen/geplant: {skipped} | unterbrochen: {interrupted_count} | Fehler: {errors}')
     else:
         print(f'\nFertig. Dateien: {total} | konvertiert: {converted} | remuxt: {remuxed} | übersprungen/geplant: {skipped} | Fehler: {errors}')
 
