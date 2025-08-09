@@ -685,11 +685,13 @@ def format_file_size(size_bytes):
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} TB"
 
+def display_file_path(src: Path):
+    """Display the file path"""
+    print(f"📁 File: {src}")
+
 def display_file_info(src: Path, info: dict, mode: Action, out_path: Path, debug_cmd: list = None, gpu_info: dict = None, use_gpu: bool = False):
     """Display detailed file information"""
-    print(f"\n{'='*60}")
-    print(f"📁 Datei: {src}")
-    print(f"📏 Größe: {format_file_size(src.stat().st_size)}")
+    print(f"📏 Size: {format_file_size(src.stat().st_size)}")
     print(f"📦 Container: {info['container'].upper()}")
     
     if info['has_video']:
@@ -878,6 +880,7 @@ def ask_user_confirmation():
 def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool, interactive: bool = False, 
                 auto_yes: bool = False, debug: bool = False, keep_languages: list = None, sort_languages: list = None,
                 gpu_info: dict = None, use_gpu: bool = False, action_filter: Action = None, delete_original: bool = False):
+    display_file_path(src)
     info = discover_media(src)
     if not info['has_video']:
         print(f'⏭️  Kein Video: {src}')
@@ -894,22 +897,21 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     
     # Get duration for progress monitoring
     duration = get_duration(src)
-
     mode = needs_processing(info, 'mp4')
-    
-    # Check action filter - skip file if it doesn't match the filter
-    if action_filter and mode != action_filter:
-        return 'filtered', auto_yes
-    
+
     # Build command for debug display
     debug_cmd = None
     if debug or (interactive and debug):
         debug_cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
                                    info, keep_languages, sort_languages, gpu_info, use_gpu)
     
-    # Interactive mode: show info and ask for confirmation
+    # Check action filter - skip file if it doesn't match the filter
+    if action_filter and mode != action_filter:
+        return 'filtered', auto_yes
+
+    display_file_info(src, info, mode, out_path, debug_cmd, gpu_info, use_gpu)
+
     if interactive and not auto_yes:
-        display_file_info(src, info, mode, out_path, debug_cmd, gpu_info, use_gpu)
         choice = ask_user_confirmation()
         if choice == 'quit':
             print("Abgebrochen.")
