@@ -152,17 +152,20 @@ class TestCacheProcessing:
         # The output should indicate files that need processing, not compatible ones
         # This is implicit in the "Zu verarbeitende Dateien" count being less than total
     
-    def test_nonexistent_cache_error(self, video_files_dir, temp_dirs, run_converter):
-        """Test error handling for nonexistent cache file"""
+    def test_nonexistent_cache_auto_generation(self, video_files_dir, temp_dirs, run_converter):
+        """Test automatic cache generation for nonexistent cache file"""
         nonexistent_cache = temp_dirs['cache'] / 'nonexistent.csv'
         
         result = run_converter([
             str(video_files_dir),
-            '--use-cache', str(nonexistent_cache)
-        ], expect_error=True)
+            '--use-cache', str(nonexistent_cache),
+            '--limit', '1',
+            '--dry-run'
+        ])
         
-        assert result.returncode != 0
-        assert 'Cache-Datei nicht gefunden' in result.stderr
+        assert result.returncode == 0
+        assert 'Cache-Datei nicht gefunden, erstelle neue' in result.stdout
+        assert nonexistent_cache.exists()
     
     def test_cache_state_management(self, temp_dirs, run_converter, prepared_cache):
         """Test that cache state is updated after processing"""
@@ -193,7 +196,7 @@ class TestLimitParameter:
     """Test --limit parameter functionality"""
     
     def test_limit_with_direct_processing(self, video_files_dir, run_converter):
-        """Test limit parameter creates auto-cache for directory processing"""
+        """Test limit parameter with direct directory processing"""
         result = run_converter([
             str(video_files_dir),
             '--limit', '2',
@@ -201,7 +204,8 @@ class TestLimitParameter:
         ])
         
         assert result.returncode == 0
-        assert 'Erstelle temporären Cache' in result.stdout
+        assert 'Beschränke Verarbeitung auf 2 Videodateien' in result.stdout
+        assert 'Gefunden:' in result.stdout
     
     def test_limit_with_cache(self, video_files_dir, temp_dirs, run_converter):
         """Test limit parameter with existing cache"""

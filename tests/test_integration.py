@@ -121,8 +121,8 @@ class TestIntegrationWorkflows:
         
         assert result.returncode == 0
     
-    def test_directory_auto_cache_workflow(self, video_files_dir, run_converter):
-        """Test automatic cache creation for directory processing"""
+    def test_directory_direct_processing_workflow(self, video_files_dir, run_converter):
+        """Test direct directory processing without cache"""
         result = run_converter([
             str(video_files_dir),
             '--limit', '3',
@@ -130,11 +130,25 @@ class TestIntegrationWorkflows:
         ])
         
         assert result.returncode == 0
-        assert 'Erstelle temporären Cache' in result.stdout
+        assert 'Gefunden:' in result.stdout  # Should show "Gefunden: N Videodateien"
+        assert 'DRY-RUN:' in result.stdout    # Should process files in dry-run mode
+    
+    def test_cache_auto_generation_workflow(self, video_files_dir, temp_dirs, run_converter):
+        """Test automatic cache generation when cache file doesn't exist"""
+        cache_file = temp_dirs['cache'] / 'auto_generated.csv'
         
-        # Check that auto-cache was created
-        auto_cache = video_files_dir / '.ffmpeg_converter_cache.csv'
-        assert auto_cache.exists()
+        # Use --use-cache with non-existent file
+        result = run_converter([
+            str(video_files_dir),
+            '--use-cache', str(cache_file),
+            '--limit', '2',
+            '--dry-run'
+        ])
+        
+        assert result.returncode == 0
+        assert 'Cache-Datei nicht gefunden, erstelle neue' in result.stdout
+        assert 'Sammele Dateien und erstelle Cache' in result.stdout
+        assert cache_file.exists()
     
     def test_comprehensive_options_workflow(self, video_files_dir, temp_dirs, run_converter):
         """Test workflow with multiple options combined"""
