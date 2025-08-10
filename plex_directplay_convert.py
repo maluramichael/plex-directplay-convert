@@ -12,6 +12,7 @@ Nutzung:
   python plex_directplay_convert.py /pfad/zum/ordner [Optionen]
   python plex_directplay_convert.py /pfad/zur/datei.mkv [Optionen]
   python plex_directplay_convert.py /pfad/zum/ordner --gather analyse.csv
+  python plex_directplay_convert.py /pfad/zum/ordner --use-cache analyse.csv --limit 10
 
 Video-Qualität:
   --crf 18          Hohe Qualität (größere Dateien)
@@ -29,6 +30,9 @@ Modi:
   --interactive     Zeigt Details, fragt vor jeder Datei
   --debug          Zeigt ffmpeg-Befehl (mit --interactive)
   --dry-run        Simulation ohne tatsächliche Konvertierung
+  --gather         Sammelt Datei-Infos in CSV-Cache (Schritt 1)
+  --use-cache      Verarbeitet aus CSV-Cache (Schritt 2)
+  --limit N        Verarbeitet nur N Dateien (überspringt kompatible)
 
 Erfordert: ffmpeg, ffprobe im PATH
 """
@@ -794,7 +798,9 @@ def analyze_file_for_csv(src: Path):
             'has_audio': info['has_audio'],
             'direct_play_compatible': is_direct_play_compatible(info),
             'action_needed': action_needed,
-            'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'processed': False,
+            'processing_date': ''
         }
     except Exception as e:
         return {
@@ -811,8 +817,87 @@ def analyze_file_for_csv(src: Path):
             'has_audio': False,
             'direct_play_compatible': False,
             'action_needed': f'Analysis failed: {str(e)}',
-            'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'processed': False,
+            'processing_date': ''
         }
+
+def read_cache_csv(csv_path: Path):
+    """Read cache CSV file and return list of file data"""
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Cache-Datei nicht gefunden: {csv_path}")
+    
+    file_data_list = []
+    with open(csv_path, 'r', newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            # Convert string bools and numbers back to proper types
+            row['file_size_bytes'] = int(row['file_size_bytes']) if row['file_size_bytes'] else 0
+            row['file_size_mb'] = float(row['file_size_mb']) if row['file_size_mb'] else 0.0
+            row['is_hdr'] = row['is_hdr'].lower() == 'true'
+            row['has_video'] = row['has_video'].lower() == 'true'
+            row['has_audio'] = row['has_audio'].lower() == 'true'
+            row['direct_play_compatible'] = row['direct_play_compatible'].lower() == 'true'
+            row['processed'] = row.get('processed', 'false').lower() == 'true'
+            file_data_list.append(row)
+    
+    return file_data_list
+
+def update_cache_entry(csv_path: Path, file_path: str, processed: bool = True, processing_date: str = None):
+    """Update a single entry in the cache file to mark it as processed"""
+    if not csv_path.exists():
+        return
+    
+    # Read all entries
+    file_data_list = read_cache_csv(csv_path)
+    
+    # Update the specific entry
+    updated = False
+    for entry in file_data_list:
+        if entry['file_path'] == file_path:
+            entry['processed'] = processed
+            entry['processing_date'] = processing_date or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            updated = True
+            break
+    
+    if updated:
+        # Write back to file
+        write_analysis_csv(file_data_list, csv_path)
+
+def gather_files_to_cache(root: Path, cache_path: Path):
+    """Gather all video files from root directory and create/update cache file"""
+    print(f"Sammele Dateien und erstelle Cache: {cache_path}")
+    
+    file_data_list = []
+    total_files = 0
+    
+    if root.is_file():
+        # Single file
+        if root.suffix.lower() in VIDEO_EXTS:
+            total_files = 1
+            print(f"Analysiere: {root}")
+            file_data = analyze_file_for_csv(root)
+            file_data_list.append(file_data)
+    else:
+        # Directory - collect all video files with better glob filtering
+        video_files = []
+        for ext in VIDEO_EXTS:
+            video_files.extend(root.rglob(f'*{ext}'))
+            video_files.extend(root.rglob(f'*{ext.upper()}'))
+        
+        # Remove duplicates and filter for actual files
+        video_files = list(set([p for p in video_files if p.is_file()]))
+        total_files = len(video_files)
+        print(f"Gefunden: {total_files} Videodateien")
+        
+        for i, p in enumerate(video_files, 1):
+            print(f"Analysiere ({i}/{total_files}): {p.name}")
+            file_data = analyze_file_for_csv(p)
+            file_data_list.append(file_data)
+    
+    # Write cache file
+    write_analysis_csv(file_data_list, cache_path)
+    return file_data_list
 
 def write_analysis_csv(file_data_list, csv_path: Path):
     """Write analysis results to CSV file"""
@@ -824,7 +909,7 @@ def write_analysis_csv(file_data_list, csv_path: Path):
         'file_path', 'file_name', 'file_size_bytes', 'file_size_mb',
         'container', 'video_codec', 'is_hdr', 'audio_codecs', 'audio_channels',
         'has_video', 'has_audio', 'direct_play_compatible', 'action_needed',
-        'analysis_date'
+        'analysis_date', 'processed', 'processing_date'
     ]
     
     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
@@ -879,7 +964,8 @@ def ask_user_confirmation():
 
 def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool, interactive: bool = False, 
                 auto_yes: bool = False, debug: bool = False, keep_languages: list = None, sort_languages: list = None,
-                gpu_info: dict = None, use_gpu: bool = False, action_filter: Action = None, delete_original: bool = False):
+                gpu_info: dict = None, use_gpu: bool = False, action_filter: Action = None, delete_original: bool = False,
+                cache_path: Path = None):
     display_file_path(src)
     info = discover_media(src)
     if not info['has_video']:
@@ -925,6 +1011,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
 
     if mode == Action.SKIP:
         print(f'Bereits kompatibel: {src}')
+        # Update cache if provided
+        if cache_path:
+            update_cache_entry(cache_path, str(src), processed=True)
         return 'skipped', auto_yes
     elif mode == Action.CONTAINER_REMUX:
         cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
@@ -962,6 +1051,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
                     print(f'Originaldatei gelöscht: {src.name}')
                 except Exception as e:
                     print(f'Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
+            # Update cache if provided
+            if cache_path:
+                update_cache_entry(cache_path, str(src), processed=True)
         return 'remuxed', auto_yes
 
     cmd = build_ffmpeg_cmd(src, out_path, mode, crf, preset, info.get('is_hdr', False), 
@@ -1007,6 +1099,11 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
             print(f'Originaldatei gelöscht: {src.name}')
         except Exception as e:
             print(f'Fehler beim Löschen der Originaldatei {src.name}: {e}', file=sys.stderr)
+    
+    # Update cache if provided
+    if cache_path:
+        update_cache_entry(cache_path, str(src), processed=True)
+    
     return 'converted', auto_yes
 
 def main():
@@ -1039,6 +1136,8 @@ def main():
     
     # Action filtering
     ap.add_argument('--action-filter', type=str, help='Nur Dateien verarbeiten, die diese Aktion benötigen (container_remux, remux_audio, transcode_video, transcode_all)')
+    ap.add_argument('--limit', type=int, help='Nur die nächsten N Dateien verarbeiten (überspringt bereits kompatible)')
+    ap.add_argument('--use-cache', type=Path, help='Verwende existierende Cache-Datei für Verarbeitung statt neue Analyse')
     
     args = ap.parse_args()
 
@@ -1092,32 +1191,29 @@ def main():
     # Handle gather mode - analyze files and export to CSV
     if args.gather:
         csv_path = args.gather.resolve()
-        print(f"Sammelmodus: Analysiere Dateien und speichere in {csv_path}")
-        
-        file_data_list = []
-        total_files = 0
-        
-        if root.is_file():
-            # Single file
-            if root.suffix.lower() in VIDEO_EXTS:
-                total_files = 1
-                print(f"Analysiere: {root}")
-                file_data = analyze_file_for_csv(root)
-                file_data_list.append(file_data)
-        else:
-            # Directory - collect all video files first to show progress
-            video_files = [p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in VIDEO_EXTS]
-            total_files = len(video_files)
-            print(f"Gefunden: {total_files} Videodateien")
-            
-            for i, p in enumerate(video_files, 1):
-                print(f"Analysiere ({i}/{total_files}): {p.name}")
-                file_data = analyze_file_for_csv(p)
-                file_data_list.append(file_data)
-        
-        # Write CSV and exit
-        write_analysis_csv(file_data_list, csv_path)
+        gather_files_to_cache(root, csv_path)
         return
+    
+    # Handle cache-based processing
+    if args.use_cache:
+        cache_path = args.use_cache.resolve()
+        try:
+            file_data_list = read_cache_csv(cache_path)
+            print(f"Cache-Datei geladen: {cache_path}")
+            print(f"Gefunden: {len(file_data_list)} Dateien in Cache")
+        except FileNotFoundError as e:
+            print(f"Fehler: {e}", file=sys.stderr)
+            sys.exit(2)
+    else:
+        # Auto-generate cache when processing directories
+        if not root.is_file():
+            # Create temporary cache file
+            cache_path = root / '.ffmpeg_converter_cache.csv'
+            print(f"Erstelle temporären Cache: {cache_path}")
+            file_data_list = gather_files_to_cache(root, cache_path)
+        else:
+            cache_path = None
+            file_data_list = None
 
     out_dir = args.out.resolve() if args.out else None
     if out_dir:
@@ -1130,51 +1226,64 @@ def main():
     remuxed = 0
     interrupted_count = 0
     auto_yes = False
-
-    # Handle single file or directory
-    if root.is_file():
-        # Single file processing
-        if root.suffix.lower() not in VIDEO_EXTS:
-            print(f'Fehler: {root} ist keine unterstützte Videodatei', file=sys.stderr)
-            sys.exit(2)
+    processed_count = 0
+    
+    # Process files based on cache or direct processing
+    if args.use_cache or file_data_list:
+        # Cache-based processing
+        files_to_process = []
         
-        total = 1
-        target_dir = out_dir if out_dir else root.parent
-        try:
-            res, auto_yes = process_file(root, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter, args.delete_original)
-            if res in ('converted',):
-                converted += 1
-            elif res in ('skipped', 'planned', 'filtered'):
-                skipped += 1
-            elif res in ('remuxed',):
-                remuxed += 1
-            elif res in ('interrupted',):
-                interrupted_count += 1
-                # For single file, just mark as interrupted and continue to summary
-            else:
-                errors += 1
-        except Exception as e:
-            print(f'Fehler bei {root}: {e}', file=sys.stderr)
-            errors += 1
-    else:
-        # Directory processing (recursive)
-        for p in root.rglob('*'):
+        # Filter files that need processing and exist
+        for entry in file_data_list:
+            file_path = Path(entry['file_path'])
+            
+            # Skip if file doesn't exist
+            if not file_path.exists():
+                continue
+                
+            # Skip if already processed
+            if entry.get('processed', False):
+                continue
+            
+            # Skip if already compatible (unless action filter requires it)
+            if entry.get('direct_play_compatible', False) and not action_filter:
+                continue
+                
+            # Apply action filter if specified
+            if action_filter:
+                action_needed = entry.get('action_needed', '')
+                filter_map = {
+                    Action.CONTAINER_REMUX: 'Container remux only',
+                    Action.REMUX_AUDIO: 'Audio transcode to AAC stereo', 
+                    Action.TRANCODE_VIDEO: 'Video transcode to H.264',
+                    Action.TRANCODE_ALL: 'Full transcode'
+                }
+                if not any(filter_text in action_needed for filter_text in filter_map.get(action_filter, [])):
+                    continue
+            
+            files_to_process.append(file_path)
+        
+        # Apply limit if specified
+        if args.limit and args.limit > 0:
+            files_to_process = files_to_process[:args.limit]
+            print(f"Beschränke Verarbeitung auf {len(files_to_process)} Dateien (--limit {args.limit})")
+        
+        total = len(files_to_process)
+        print(f"Zu verarbeitende Dateien: {total}")
+        
+        # Process each file
+        for p in files_to_process:
             # Check for global interruption
             if interrupted:
                 print(f"\nVerarbeitung unterbrochen")
                 break
-                
-            if not p.is_file():
-                continue
-            if p.suffix.lower() not in VIDEO_EXTS:
-                continue
-
-            total += 1
+            
             target_dir = out_dir if out_dir else p.parent
             try:
                 res, auto_yes = process_file(p, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
-                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter, args.delete_original)
+                                            auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter, args.delete_original, cache_path)
+                processed_count += 1
+                
                 if res in ('converted',):
                     converted += 1
                 elif res in ('skipped', 'planned', 'filtered'):
@@ -1189,6 +1298,35 @@ def main():
             except Exception as e:
                 print(f'Fehler bei {p}: {e}', file=sys.stderr)
                 errors += 1
+                
+    else:
+        # Single file processing (legacy mode)
+        if not root.is_file():
+            print(f'Fehler: Für Verzeichnis-Verarbeitung wird automatisch ein Cache erstellt', file=sys.stderr)
+            sys.exit(2)
+            
+        if root.suffix.lower() not in VIDEO_EXTS:
+            print(f'Fehler: {root} ist keine unterstützte Videodatei', file=sys.stderr)
+            sys.exit(2)
+        
+        total = 1
+        target_dir = out_dir if out_dir else root.parent
+        try:
+            res, auto_yes = process_file(root, target_dir, args.crf, args.preset, args.dry_run, args.interactive, 
+                                        auto_yes, args.debug, keep_languages, sort_languages, gpu_info, getattr(args, 'use_gpu', False), action_filter, args.delete_original, None)
+            if res in ('converted',):
+                converted += 1
+            elif res in ('skipped', 'planned', 'filtered'):
+                skipped += 1
+            elif res in ('remuxed',):
+                remuxed += 1
+            elif res in ('interrupted',):
+                interrupted_count += 1
+            else:
+                errors += 1
+        except Exception as e:
+            print(f'Fehler bei {root}: {e}', file=sys.stderr)
+            errors += 1
 
     # Final summary
     if interrupted_count > 0:

@@ -1,4 +1,9 @@
-.vscode
+.vscode/
+.claude/
+__pycache__/
+venv/
+.pytest_cache/
+
 *.csv
 *.mp4
 *.mkv
