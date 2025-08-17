@@ -51,18 +51,18 @@ class TestConvertSuffix:
             mock_build_cmd.return_value = ['ffmpeg', '-i', 'input.mkv', 'output.mp4.convert']
             mock_run.return_value = (0, '', '')  # Success
             
-            # Create the expected .convert file that ffmpeg would create
-            convert_file = dst_dir / 'test_video.mp4.convert'
+            # Create the expected convert file that ffmpeg would create
+            convert_file = dst_dir / 'convert.test_video.mp4'
             dst_dir.mkdir(parents=True, exist_ok=True)
             convert_file.touch()
             
             result, _ = process_file(src_file, dst_dir, 22, 'medium', False, False)
             
-            # Verify ffmpeg was called with .convert suffix
+            # Verify ffmpeg was called with convert prefix
             mock_build_cmd.assert_called_once()
             call_args = mock_build_cmd.call_args
             output_path = call_args[0][1]  # Second argument is output path
-            assert str(output_path).endswith('.mp4.convert')
+            assert output_path.name.startswith('convert.')
             
             assert result == 'processed'
     
@@ -73,10 +73,10 @@ class TestConvertSuffix:
         dst_dir = temp_dirs['output']
         dst_dir.mkdir(parents=True, exist_ok=True)
         
-        convert_file = dst_dir / 'test_video_success.mp4.convert'
+        convert_file = dst_dir / 'convert.test_video_success.mp4'
         
         def mock_run_side_effect(*args, **kwargs):
-            # Simulate ffmpeg creating the .convert file during conversion
+            # Simulate ffmpeg creating the convert file during conversion
             convert_file.write_text('converted content')
             return (0, '', '')  # Success
         
@@ -101,20 +101,20 @@ class TestConvertSuffix:
             # Original file should be deleted
             assert not src_file.exists()
             
-            # .convert file should be renamed to final name
+            # convert file should be renamed to final name
             final_file = dst_dir / 'test_video_success.mp4'
             assert final_file.exists()
             assert not convert_file.exists()
             assert final_file.read_text() == 'converted content'
     
     def test_conversion_error_cleanup(self, temp_dirs, sample_video_info):
-        """Test that .convert file is cleaned up on conversion error"""
+        """Test that convert file is cleaned up on conversion error"""
         src_file = temp_dirs['temp'] / 'test_video_error.mkv'
         src_file.write_text('original content')
         dst_dir = temp_dirs['output']
         dst_dir.mkdir(parents=True, exist_ok=True)
         
-        convert_file = dst_dir / 'test_video_error.mp4.convert'
+        convert_file = dst_dir / 'convert.test_video_error.mp4'
         
         def mock_run_side_effect(*args, **kwargs):
             # Simulate ffmpeg creating partial file before failing
@@ -143,7 +143,7 @@ class TestConvertSuffix:
             assert src_file.exists()
             assert src_file.read_text() == 'original content'
             
-            # .convert file should be cleaned up
+            # convert file should be cleaned up
             assert not convert_file.exists()
             
             # Final file should not exist
@@ -151,13 +151,13 @@ class TestConvertSuffix:
             assert not final_file.exists()
     
     def test_conversion_interrupted_cleanup(self, temp_dirs, sample_video_info):
-        """Test that .convert file is cleaned up on interruption"""
+        """Test that convert file is cleaned up on interruption"""
         src_file = temp_dirs['temp'] / 'test_video_interrupt.mkv'
         src_file.write_text('original content')
         dst_dir = temp_dirs['output']
         dst_dir.mkdir(parents=True, exist_ok=True)
         
-        convert_file = dst_dir / 'test_video_interrupt.mp4.convert'
+        convert_file = dst_dir / 'convert.test_video_interrupt.mp4'
         
         def mock_run_side_effect(*args, **kwargs):
             # Simulate ffmpeg creating partial file before interruption
@@ -186,7 +186,7 @@ class TestConvertSuffix:
             assert src_file.exists()
             assert src_file.read_text() == 'original content'
             
-            # .convert file should be cleaned up
+            # convert file should be cleaned up
             assert not convert_file.exists()
             
             # Final file should not exist
@@ -201,10 +201,10 @@ class TestConvertSuffix:
         dst_dir.mkdir(parents=True, exist_ok=True)
         cache_file = temp_dirs['cache'] / 'test_cache.csv'
         
-        convert_file = dst_dir / 'test_video_cache.mp4.convert'
+        convert_file = dst_dir / 'convert.test_video_cache.mp4'
         
         def mock_run_side_effect(*args, **kwargs):
-            # Simulate ffmpeg creating the .convert file
+            # Simulate ffmpeg creating the convert file
             convert_file.write_text('converted content')
             return (0, '', '')  # Success
         
