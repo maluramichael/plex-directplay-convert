@@ -36,14 +36,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
         print(f'Kein Video: {src}')
         return 'skipped', auto_yes
 
-    out_name = src.stem + '.mp4'
+    out_name = src.stem + '.mp4.convert'
     out_path = (dst_dir / out_name).resolve()
-    
-    # Use temporary filename if output would overwrite source and delete_original is enabled
-    temp_output = False
-    if delete_original and src.resolve() == out_path:
-        temp_output = True
-        out_path = (dst_dir / (src.stem + '.tmp.mp4')).resolve()
+    final_path = (dst_dir / (src.stem + '.mp4')).resolve()
     
     # Get duration for progress monitoring
     duration = get_duration(src)
@@ -84,9 +79,9 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     # Create output directory if it doesn't exist
     dst_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if output file already exists (unless using temporary output)
-    if not temp_output and out_path.exists():
-        print(f"Output-Datei existiert bereits: {out_path}")
+    # Check if final output file already exists
+    if final_path.exists():
+        print(f"Output-Datei existiert bereits: {final_path}")
         return 'skipped', auto_yes
 
     print(f"Erstelle: {out_path.name}")
@@ -102,40 +97,48 @@ def process_file(src: Path, dst_dir: Path, crf: int, preset: str, dry_run: bool,
     
     if ret == 130:  # Interrupted
         print("\nVerarbeitung unterbrochen")
-        # Clean up partial output file
+        # Clean up partial .convert file
         try:
             if out_path.exists():
                 out_path.unlink()
-                print(f"Partielle Datei entfernt: {out_path.name}")
+                print(f"Partielle .convert Datei entfernt: {out_path.name}")
         except Exception as cleanup_e:
-            print(f"Warnung: Konnte partielle Datei nicht entfernen: {cleanup_e}")
+            print(f"Warnung: Konnte partielle .convert Datei nicht entfernen: {cleanup_e}")
         return 'interrupted', auto_yes
     elif ret != 0:
         print(f"Fehler bei FFmpeg (Exit-Code: {ret})")
         if err:
             print(f"Fehlerdetails: {err}")
-        # Clean up failed output file
+        # Clean up failed .convert file
         try:
             if out_path.exists():
                 out_path.unlink()
-                print(f"Fehlgeschlagene Datei entfernt: {out_path.name}")
+                print(f"Fehlgeschlagene .convert Datei entfernt: {out_path.name}")
         except Exception as cleanup_e:
-            print(f"Warnung: Konnte fehlgeschlagene Datei nicht entfernen: {cleanup_e}")
+            print(f"Warnung: Konnte fehlgeschlagene .convert Datei nicht entfernen: {cleanup_e}")
         return 'error', auto_yes
 
     print("Verarbeitung abgeschlossen!")
 
-    # Handle temporary file cleanup and renaming
-    if temp_output:
-        final_path = (dst_dir / (src.stem + '.mp4')).resolve()
-        handle_temp_file_cleanup(out_path, final_path, src, delete_original)
-    elif delete_original and src.resolve() != out_path:
-        # Delete original only if output is different file
-        try:
-            src.unlink()
-            print(f'Originaldatei gelöscht: {src.name}')
-        except Exception as e:
-            print(f'Fehler beim Löschen der Originaldatei: {e}')
+    # Handle file renaming: remove original and rename .convert file
+    try:
+        # Remove original file
+        src.unlink()
+        print(f'Originaldatei gelöscht: {src.name}')
+        
+        # Rename .convert file to final name
+        out_path.rename(final_path)
+        print(f'Datei umbenannt: {out_path.name} -> {final_path.name}')
+    except Exception as e:
+        print(f'Fehler beim Umbenennen der Dateien: {e}')
+        # If rename failed, try to restore original state
+        if not src.exists() and out_path.exists():
+            try:
+                out_path.unlink()
+                print(f'Temporäre Datei entfernt: {out_path.name}')
+            except:
+                pass
+        return 'error', auto_yes
 
     # Update cache if provided
     if cache_path:
