@@ -257,7 +257,14 @@ def main():
         try:
             file_data_list = read_cache_csv(cache_path)
             print(f"Cache-Datei geladen: {cache_path}")
-            print(f"Gefunden: {len(file_data_list)} Dateien in Cache")
+            
+            # Count different file states
+            total_files = len(file_data_list)
+            already_processed = sum(1 for entry in file_data_list if entry.get('processed', False))
+            compatible_files = sum(1 for entry in file_data_list if entry.get('direct_play_compatible', False) and not entry.get('processed', False))
+            need_processing = total_files - already_processed - compatible_files
+            
+            print(f"Gefunden: {total_files} Dateien in Cache, {already_processed} sind bereits konvertiert, {need_processing} müssen transcodiert werden")
         except FileNotFoundError:
             # Generate cache file if it doesn't exist
             print(f"Cache-Datei nicht gefunden, erstelle neue: {cache_path}")
