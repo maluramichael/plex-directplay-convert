@@ -5,6 +5,7 @@ Media file analysis and compatibility checking
 from pathlib import Path
 from .ffmpeg_runner import ffprobe_streams
 from .language_utils import normalize_language, Action
+from .models import MediaInfo, VideoStreamInfo, AudioStreamInfo, SubtitleStreamInfo
 
 def is_hdr_content(video_stream):
     """Detect HDR content based on color characteristics and side data"""
@@ -72,6 +73,60 @@ def discover_media(path: Path):
         'has_video': v is not None,
         'is_hdr': is_hdr,
     }
+
+def discover_media_pydantic(path: Path) -> MediaInfo:
+    """Analyze media file and return Pydantic MediaInfo model"""
+    streams = ffprobe_streams(path)
+    v = next((s for s in streams if s.get('codec_type') == 'video'), None)
+    a = [s for s in streams if s.get('codec_type') == 'audio']
+    s = [s for s in streams if s.get('codec_type') == 'subtitle']
+    
+    # Create video stream info
+    video_stream = None
+    if v:
+        video_stream = VideoStreamInfo(
+            codec_name=v.get('codec_name', 'unknown'),
+            color_transfer=v.get('color_transfer'),
+            color_primaries=v.get('color_primaries'),
+            side_data_list=v.get('side_data_list', [])
+        )
+    
+    # Create audio stream info
+    audio_streams = []
+    for stream in a:
+        tags = stream.get('tags', {})
+        lang = tags.get('language', '')
+        normalized_lang = normalize_language(lang)
+        
+        audio_stream = AudioStreamInfo(
+            codec_name=stream.get('codec_name', 'unknown'),
+            channels=int(stream.get('channels', 0)),
+            language=normalized_lang if normalized_lang else None,
+            tags=tags
+        )
+        audio_streams.append(audio_stream)
+    
+    # Create subtitle stream info
+    subtitle_streams = []
+    for stream in s:
+        tags = stream.get('tags', {})
+        lang = tags.get('language', '')
+        normalized_lang = normalize_language(lang)
+        
+        subtitle_stream = SubtitleStreamInfo(
+            codec_name=stream.get('codec_name', 'unknown'),
+            language=normalized_lang if normalized_lang else None,
+            tags=tags
+        )
+        subtitle_streams.append(subtitle_stream)
+    
+    return MediaInfo(
+        file_path=path,
+        container=path.suffix.lower().lstrip('.'),
+        video_stream=video_stream,
+        audio_streams=audio_streams,
+        subtitle_streams=subtitle_streams
+    )
 
 def needs_processing(info, out_ext: str):
     """Decide whether we must transcode or can remux, or skip entirely.
