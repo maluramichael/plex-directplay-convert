@@ -21,6 +21,7 @@ Requires: ffmpeg, ffprobe in PATH
 import argparse
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Import our modular components
@@ -30,6 +31,9 @@ from lib.gpu_utils import detect_gpu_acceleration
 from lib.cache_manager import read_cache_csv, gather_files_to_cache
 from lib.processor import process_file
 from lib.file_utils import VIDEO_EXTS
+from lib.rich_console import rich_output
+from lib.models import ProcessingConfig, BatchProcessingStats
+from lib.parallel_processor import create_parallel_processor
 
 def parse_arguments():
     """Parse and validate command line arguments"""
@@ -105,12 +109,7 @@ def setup_gpu_acceleration(use_gpu):
         return None
         
     gpu_info = detect_gpu_acceleration()
-    if gpu_info['available']:
-        platform_icons = {'metal': 'METAL', 'nvidia': 'NVIDIA', 'intel': 'INTEL'}
-        icon = platform_icons.get(gpu_info['platform'], 'GPU')
-        print(f"{icon} GPU-Beschleunigung erkannt: {gpu_info['platform'].title()} ({gpu_info['encoder']})")
-    else:
-        print("GPU-Beschleunigung angefordert, aber nicht verfügbar - verwende CPU-Kodierung")
+    rich_output.print_gpu_info(gpu_info)
     
     return gpu_info
 
@@ -180,46 +179,61 @@ def apply_limit_and_print(files_list, limit, description="Dateien"):
     """Apply limit to files list and print information"""
     if limit and limit > 0:
         files_list = files_list[:limit]
-        print(f"Beschränke Verarbeitung auf {len(files_list)} {description} (--limit {limit})")
+        rich_output.print_info(f"Beschränke Verarbeitung auf {len(files_list)} {description} (--limit {limit})")
     return files_list
 
 def process_files_batch(files, out_dir, cache_path, args, keep_languages, sort_languages, gpu_info, counters, action_filter=None):
     """Process a batch of files and update counters"""
     auto_yes = False
     
-    for file_path in files:
-        # Check for global interruption
-        if interrupted:
-            print(f"\nVerarbeitung unterbrochen")
-            break
+    # Create batch progress bar
+    progress = rich_output.create_batch_progress()
+    
+    with progress:
+        task_id = progress.add_task("Processing files...", total=len(files))
         
-        target_dir = out_dir if out_dir else file_path.parent
-        try:
-            res, auto_yes = process_file(
-                file_path, target_dir, args.crf, args.preset, args.dry_run, args.interactive,
-                auto_yes, args.debug, keep_languages, sort_languages, gpu_info,
-                getattr(args, 'use_gpu', False), action_filter,
-                args.delete_original, cache_path
-            )
-            counters['processed'] += 1
-            
-            # Update counters and check for early exit
-            should_break = update_processing_counters(res, counters)
-            if should_break:
+        for file_path in files:
+            # Check for global interruption
+            if interrupted:
+                rich_output.print_interrupted("Verarbeitung unterbrochen")
                 break
+            
+            target_dir = out_dir if out_dir else file_path.parent
+            try:
+                res, auto_yes = process_file(
+                    file_path, target_dir, args.crf, args.preset, args.dry_run, args.interactive,
+                    auto_yes, args.debug, keep_languages, sort_languages, gpu_info,
+                    getattr(args, 'use_gpu', False), action_filter,
+                    args.delete_original, cache_path
+                )
+                counters['processed'] += 1
                 
-        except Exception as e:
-            print(f'Fehler bei {file_path}: {e}', file=sys.stderr)
-            counters['errors'] += 1
+                # Update counters and check for early exit
+                should_break = update_processing_counters(res, counters)
+                if should_break:
+                    break
+                    
+            except Exception as e:
+                rich_output.print_error(f'Fehler bei {file_path}', str(e))
+                counters['errors'] += 1
+            
+            progress.update(task_id, advance=1)
     
     return counters
 
 def print_final_summary(counters):
-    """Print final processing summary"""
-    if counters['interrupted'] > 0:
-        print(f'\nUnterbrochen. Dateien: {counters["total"]} | konvertiert: {counters["converted"]} | remuxt: {counters["remuxed"]} | übersprungen/geplant: {counters["skipped"]} | unterbrochen: {counters["interrupted"]} | Fehler: {counters["errors"]}')
-    else:
-        print(f'\nFertig. Dateien: {counters["total"]} | konvertiert: {counters["converted"]} | remuxt: {counters["remuxed"]} | übersprungen/geplant: {counters["skipped"]} | Fehler: {counters["errors"]}')
+    """Print final processing summary using Rich"""
+    stats = BatchProcessingStats(
+        total_files=counters['total'],
+        processed_files=counters['processed'],
+        converted_files=counters['converted'],
+        remuxed_files=counters['remuxed'],
+        skipped_files=counters['skipped'],
+        error_files=counters['errors'],
+        interrupted_files=counters['interrupted'],
+        end_time=datetime.now()
+    )
+    rich_output.print_final_summary(stats)
 
 def main():
     # Setup signal handlers for graceful shutdown
@@ -230,9 +244,12 @@ def main():
     keep_languages, sort_languages = parse_language_arguments(args)
     action_filter = parse_action_filter(args.action_filter)
 
+    # Print application header
+    rich_output.print_header("FFmpeg Converter for Plex Direct Play")
+    
     # Check for required tools
     if shutil.which('ffmpeg') is None or shutil.which('ffprobe') is None:
-        print('Fehler: ffmpeg/ffprobe nicht gefunden. Bitte in PATH verfügbar machen.', file=sys.stderr)
+        rich_output.print_error('ffmpeg/ffprobe nicht gefunden. Bitte in PATH verfügbar machen.')
         sys.exit(2)
     
     # Setup GPU acceleration
@@ -240,12 +257,15 @@ def main():
 
     root: Path = args.root
     if not root.exists():
-        print(f'Pfad existiert nicht: {root}', file=sys.stderr); sys.exit(2)
+        rich_output.print_error(f'Pfad existiert nicht: {root}')
+        sys.exit(2)
 
     # Handle gather mode - analyze files and export to CSV
     if args.gather:
         csv_path = args.gather.resolve()
+        rich_output.print_info(f"Gathering file analysis to: {csv_path}")
         gather_files_to_cache(root, csv_path)
+        rich_output.print_success(f"Analysis complete: {csv_path}")
         return
     
     # Handle cache-based processing (only when --use-cache is specified)
@@ -256,7 +276,6 @@ def main():
         cache_path = args.use_cache.resolve()
         try:
             file_data_list = read_cache_csv(cache_path)
-            print(f"Cache-Datei geladen: {cache_path}")
             
             # Count different file states
             total_files = len(file_data_list)
@@ -264,10 +283,10 @@ def main():
             compatible_files = sum(1 for entry in file_data_list if entry.get('direct_play_compatible', False) and not entry.get('processed', False))
             need_processing = total_files - already_processed - compatible_files
             
-            print(f"Gefunden: {total_files} Dateien in Cache, {already_processed} sind bereits konvertiert, {need_processing} müssen transcodiert werden")
+            rich_output.print_cache_info(cache_path, total_files, already_processed, compatible_files, need_processing)
         except FileNotFoundError:
             # Generate cache file if it doesn't exist
-            print(f"Cache-Datei nicht gefunden, erstelle neue: {cache_path}")
+            rich_output.print_warning(f"Cache-Datei nicht gefunden, erstelle neue: {cache_path}")
             file_data_list = gather_files_to_cache(root, cache_path)
 
     out_dir = args.out.resolve() if args.out else None
@@ -291,7 +310,7 @@ def main():
         files_to_process = apply_limit_and_print(files_to_process, args.limit)
         
         counters['total'] = len(files_to_process)
-        print(f"Zu verarbeitende Dateien: {counters['total']}")
+        rich_output.print_info(f"Zu verarbeitende Dateien: {counters['total']}")
         
         process_files_batch(files_to_process, out_dir, cache_path, args, keep_languages, sort_languages, gpu_info, counters, action_filter)
                 
@@ -300,7 +319,7 @@ def main():
         if root.is_file():
             # Single file processing
             if root.suffix.lower() not in VIDEO_EXTS:
-                print(f'Fehler: {root} ist keine unterstützte Videodatei', file=sys.stderr)
+                rich_output.print_error(f'{root} ist keine unterstützte Videodatei')
                 sys.exit(2)
             
             counters['total'] = 1
@@ -311,7 +330,7 @@ def main():
             video_files = apply_limit_and_print(video_files, args.limit, "Videodateien")
             
             counters['total'] = len(video_files)
-            print(f"Gefunden: {counters['total']} Videodateien")
+            rich_output.print_info(f"Gefunden: {counters['total']} Videodateien")
             
             process_files_batch(video_files, out_dir, None, args, keep_languages, sort_languages, gpu_info, counters, action_filter)
 

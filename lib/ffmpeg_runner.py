@@ -167,7 +167,7 @@ def setup_signal_handlers():
     signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
     signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
 
-def run(cmd, show_progress=False, duration=None):
+def run(cmd, show_progress=False, duration=None, progress_callback=None):
     """Execute command with optional progress monitoring"""
     global current_ffmpeg_process, interrupted
     
@@ -213,7 +213,12 @@ def run(cmd, show_progress=False, duration=None):
                 
                 # Parse progress and update display
                 if progress.parse_progress_line(stderr_line):
-                    progress.update_display()
+                    # Call Rich progress callback if provided
+                    if progress_callback and duration:
+                        progress_callback(progress.current_time)
+                    else:
+                        # Fallback to traditional progress display
+                        progress.update_display()
         
         # Get remaining output
         stdout, stderr_remaining = p.communicate()
